@@ -170,30 +170,29 @@ student2Router.post("/student2/mongo/assign_delivery", async (req, res, next) =>
     const rider = await db.collection("people").findOne({ type: "rider", email: riderEmail });
     if (!rider) throw notFound("rider not found");
 
-    const now = new Date();
-
-    // I first read the order so I can keep assignedAt stable if it was already set.
-    const order = await db.collection("orders").findOne({ orderId });
-    if (!order) throw notFound("order not found in mongo (did you migrate?)");
-
-    const assignedAt = order.delivery?.assignedAt ?? now;
-
-    await db.collection("orders").updateOne(
+    // IMPORTANT: this must be atomic. If two concurrent requests assign the same order,
+    // we must preserve the first assignment time (assignedAt) and never overwrite it.
+    // Using a pipeline update with $ifNull ensures assignedAt is only set if missing/null.
+    const updateResult = await db.collection("orders").updateOne(
       { orderId },
-      {
-        $set: {
-          "delivery.deliveryStatus": deliveryStatus,
-          "delivery.rider": {
-            personId: rider.personId,
-            name: rider.name,
-            email: rider.email,
-            vehicleType: rider.rider?.vehicleType || null,
-            rating: rider.rider?.rating ?? null
-          },
-          "delivery.assignedAt": assignedAt
+      [
+        {
+          $set: {
+            "delivery.deliveryStatus": deliveryStatus,
+            "delivery.rider": {
+              personId: rider.personId,
+              name: rider.name,
+              email: rider.email,
+              vehicleType: rider.rider?.vehicleType || null,
+              rating: rider.rider?.rating ?? null
+            },
+            "delivery.assignedAt": { $ifNull: ["$delivery.assignedAt", "$$NOW"] }
+          }
         }
-      }
+      ]
     );
+
+    if (!updateResult.matchedCount) throw notFound("order not found in mongo (did you migrate?)");
 
     res.json({ ok: true });
   } catch (e) {
