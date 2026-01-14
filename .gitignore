@@ -1,0 +1,30 @@
+# MS2 Plan (excluded from repo)
+MS2_PLAN.md
+
+# LaTeX Template (excluded from repo)
+Template MS2 2025W - Latex/
+
+# Common ignores
+node_modules/
+*.log
+.DS_Store
+.env
+*.swp
+*.swo
+*~
+
+# Build artifacts
+dist/
+build/
+*.class
+*.jar
+*.war
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+Thumbs.db
+.DS_Store
