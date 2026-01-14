@@ -6,6 +6,7 @@ const { withConn } = require("./db/mariadb");
 const { ensureMongoIndexes } = require("./db/mongodb");
 
 const { importRouter } = require("./routes/import");
+const { student1Router } = require("./routes/student1");
 const { student2Router } = require("./routes/student2");
 const { migrateRouter } = require("./routes/migrate");
 
@@ -23,6 +24,7 @@ async function main() {
   });
 
   app.use("/api", importRouter);
+  app.use("/api", student1Router);
   app.use("/api", student2Router);
   app.use("/api", migrateRouter);
 

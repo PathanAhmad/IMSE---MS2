@@ -73,6 +73,139 @@ Query params:
 }
 ```
 
+## Student 1 — SQL (MariaDB)
+
+### POST `/api/student1/sql/place_order`
+
+I create a new order for a customer at a restaurant, insert multiple order items (weak entity), and update the order total.
+
+Request body:
+
+```json
+{
+  "customerEmail": "customer1@example.com",
+  "restaurantName": "Pasta Place",
+  "items": [
+    { "menuItemId": 1, "quantity": 2 },
+    { "menuItemName": "Item 5", "quantity": 1 }
+  ]
+}
+```
+
+**200**
+
+```json
+{
+  "ok": true,
+  "order": {
+    "orderId": 101,
+    "createdAt": "2026-01-14T10:00:00.000Z",
+    "status": "created",
+    "totalAmount": 24.5,
+    "restaurant": { "name": "Pasta Place", "address": "10 Main St" },
+    "customer": { "name": "Customer 1", "email": "customer1@example.com" },
+    "orderItems": [
+      { "menuItemId": 1, "name": "Item 1", "quantity": 2, "unitPrice": 9.5 }
+    ]
+  }
+}
+```
+
+### POST `/api/student1/sql/pay`
+
+I create (or finalize) the payment for an order and update the order status from `created` → `preparing`.
+
+Request body:
+
+```json
+{
+  "orderId": 101,
+  "paymentMethod": "card"
+}
+```
+
+**200**
+
+```json
+{
+  "ok": true,
+  "payment": {
+    "paymentId": 55,
+    "orderId": 101,
+    "amount": 24.5,
+    "method": "card",
+    "paidAt": "2026-01-14T10:05:00.000Z"
+  }
+}
+```
+
+### GET `/api/student1/sql/report`
+
+Query params:
+- `restaurantName` (required)
+- `from` (optional ISO date)
+- `to` (optional ISO date)
+
+**200**
+
+```json
+{
+  "ok": true,
+  "rows": [
+    {
+      "restaurantName": "Pasta Place",
+      "orderId": 101,
+      "orderCreatedAt": "2026-01-14T10:00:00.000Z",
+      "status": "preparing",
+      "totalAmount": 24.5,
+      "customerEmail": "customer1@example.com",
+      "customerName": "Customer 1",
+      "paymentAmount": 24.5,
+      "paymentMethod": "card",
+      "paidAt": "2026-01-14T10:05:00.000Z"
+    }
+  ]
+}
+```
+
+## Student 1 — MongoDB
+
+### POST `/api/student1/mongo/place_order`
+
+Same intent as the SQL endpoint, but writes to MongoDB.
+
+Request body:
+
+```json
+{
+  "customerEmail": "customer1@example.com",
+  "restaurantName": "Pasta Place",
+  "items": [
+    { "menuItemId": 1, "name": "Item 1", "quantity": 2, "unitPrice": 9.5 }
+  ]
+}
+```
+
+**200**
+
+```json
+{ "ok": true, "orderId": 101 }
+```
+
+### POST `/api/student1/mongo/pay`
+
+Same JSON body as the SQL endpoint.
+
+**200**
+
+```json
+{ "ok": true, "orderId": 101, "status": "preparing", "payment": { "amount": 24.5, "method": "card", "paidAt": "2026-01-14T10:05:00.000Z" } }
+```
+
+### GET `/api/student1/mongo/report`
+
+Same query params and same output shape as the SQL report (as close as practical).
+
 ## Student 2 — SQL (MariaDB)
 
 ### POST `/api/student2/sql/assign_delivery`

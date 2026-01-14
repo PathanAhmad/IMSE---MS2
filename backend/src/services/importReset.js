@@ -7,6 +7,10 @@ function randInt(rng, min, max) {
 }
 
 function pick(rng, arr) {
+  if (!Array.isArray(arr) || arr.length === 0) {
+    // I fail loudly (with stack) so empty-pick bugs are always traceable.
+    throw new Error("pick() called with empty array");
+  }
   return arr[randInt(rng, 0, arr.length - 1)];
 }
 
@@ -99,9 +103,21 @@ async function importResetMariaDb() {
     }
 
     // Menu items
+    // Root cause fix:
+    // If menu items are assigned to restaurants purely at random, a restaurant can (rarely) end up
+    // with zero items. Order generation later picks a menu item for the chosen restaurant, so
+    // we guarantee every restaurant gets at least 1 menu item.
+    const menuItemTotal = 60;
+    if (restaurantIds.length > menuItemTotal) {
+      throw new Error(`Cannot generate menu items: ${restaurantIds.length} restaurants but only ${menuItemTotal} items`);
+    }
+
     const menuItemIds = [];
-    for (let i = 0; i < 60; i++) {
-      const restaurantId = pick(rng, restaurantIds);
+    const itemsByRestaurantId = new Map(restaurantIds.map((rid) => [rid, []]));
+
+    for (let i = 0; i < menuItemTotal; i++) {
+      // First N items cover all restaurants; remaining items are randomized.
+      const restaurantId = i < restaurantIds.length ? restaurantIds[i] : pick(rng, restaurantIds);
       const name = `Item ${i + 1}`;
       const description = `Tasty ${name.toLowerCase()}`;
       const price = (randInt(rng, 500, 2500) / 100).toFixed(2);
@@ -110,7 +126,9 @@ async function importResetMariaDb() {
         [restaurantId, name, description, price]
       );
       const menuItemId = Number(r.insertId);
-      menuItemIds.push({ menuItemId, restaurantId, price: Number(price) });
+      const mi = { menuItemId, restaurantId, price: Number(price) };
+      menuItemIds.push(mi);
+      itemsByRestaurantId.get(restaurantId).push(mi);
 
       // 1-2 categories per item
       const c1 = pick(rng, categories);
@@ -193,7 +211,10 @@ async function importResetMariaDb() {
       const orderId = Number(o.insertId);
       insertedOrders++;
 
-      const itemsForRestaurant = menuItemIds.filter((m) => m.restaurantId === restaurantId);
+      const itemsForRestaurant = itemsByRestaurantId.get(restaurantId) || [];
+      if (!itemsForRestaurant.length) {
+        throw new Error(`No menu items exist for restaurantId=${restaurantId} (demo data invariant violated)`);
+      }
       const itemCount = randInt(rng, 1, 5);
 
       let total = 0;
