@@ -178,15 +178,31 @@ student2Router.post("/student2/mongo/assign_delivery", async (req, res, next) =>
       [
         {
           $set: {
-            "delivery.deliveryStatus": deliveryStatus,
-            "delivery.rider": {
-              personId: rider.personId,
-              name: rider.name,
-              email: rider.email,
-              vehicleType: rider.rider?.vehicleType || null,
-              rating: rider.rider?.rating ?? null
-            },
-            "delivery.assignedAt": { $ifNull: ["$delivery.assignedAt", "$$NOW"] }
+            // NOTE: Some orders are created with delivery: null (see Student 1 mongo create_order).
+            // Setting subfields on a null parent throws in MongoDB, so I always set the full delivery object.
+            // I also ensure deliveryId exists for report output + API contract consistency.
+            delivery: {
+              $let: {
+                vars: { existing: { $ifNull: ["$delivery", {}] } },
+                in: {
+                  $mergeObjects: [
+                    "$$existing",
+                    {
+                      deliveryId: { $ifNull: ["$$existing.deliveryId", "$orderId"] },
+                      deliveryStatus,
+                      rider: {
+                        personId: rider.personId,
+                        name: rider.name,
+                        email: rider.email,
+                        vehicleType: rider.rider?.vehicleType || null,
+                        rating: rider.rider?.rating ?? null
+                      },
+                      assignedAt: { $ifNull: ["$$existing.assignedAt", "$$NOW"] }
+                    }
+                  ]
+                }
+              }
+            }
           }
         }
       ]
