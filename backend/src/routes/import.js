@@ -113,14 +113,38 @@ importRouter.get("/orders", async (req, res, next) => {
   try {
     const limit = Number(req.query.limit || 50);
     const status = req.query.status ? String(req.query.status) : null;
+    const riderEmail = req.query.riderEmail ? String(req.query.riderEmail) : null;
+    const deliveryStatus = req.query.deliveryStatus ? String(req.query.deliveryStatus) : null;
+    const unassigned = req.query.unassigned === 'true';
+    const excludeDelivered = req.query.excludeDelivered === 'true';
 
     const params = [];
-    let whereSql = "";
+    const whereConditions = [];
+    
     if (status) {
-      whereSql = "WHERE o.status = ?";
+      whereConditions.push("o.status = ?");
       params.push(status);
     }
 
+    if (riderEmail) {
+      whereConditions.push("rp.email = ?");
+      params.push(riderEmail);
+    }
+
+    if (deliveryStatus) {
+      whereConditions.push("d.delivery_status = ?");
+      params.push(deliveryStatus);
+    }
+
+    if (unassigned) {
+      whereConditions.push("d.rider_id IS NULL");
+    }
+
+    if (excludeDelivered) {
+      whereConditions.push("(d.delivery_status IS NULL OR d.delivery_status != 'delivered')");
+    }
+
+    const whereSql = whereConditions.length > 0 ? "WHERE " + whereConditions.join(" AND ") : "";
     params.push(Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 200) : 50);
 
     const orders = await withConn((conn) =>
@@ -131,9 +155,20 @@ importRouter.get("/orders", async (req, res, next) => {
           o.created_at AS createdAt,
           o.status AS status,
           o.total_amount AS totalAmount,
-          r.name AS restaurantName
+          r.name AS restaurantName,
+          cp.email AS customerEmail,
+          d.delivery_status AS deliveryStatus,
+          d.assigned_at AS assignedAt,
+          rp.email AS riderEmail,
+          pay.payment_method AS paymentMethod
         FROM \`order\` o
         JOIN restaurant r ON r.restaurant_id = o.restaurant_id
+        JOIN customer c ON c.customer_id = o.customer_id
+        JOIN person cp ON cp.person_id = c.customer_id
+        LEFT JOIN delivery d ON d.order_id = o.order_id
+        LEFT JOIN rider rid ON rid.rider_id = d.rider_id
+        LEFT JOIN person rp ON rp.person_id = rid.rider_id
+        LEFT JOIN payment pay ON pay.order_id = o.order_id
         ${whereSql}
         ORDER BY o.created_at DESC
         LIMIT ?
