@@ -1,331 +1,216 @@
-# MongoDB Design & Implementation
+# MongoDB (NoSQL) Design
 
-## NoSQL Schema Design
+This document describes what we actually store in MongoDB in this project, why we shaped it that way, and how we check index usage with `mongosh`.
 
-### Collection: `customers`
-```javascript
-{
-  _id: ObjectId,
-  email: string (unique),
-  name: string,
-  phone: string,
-  defaultAddress: string,
-  preferredPaymentMethod: string
-}
-```
-
-**Design Decision:** Denormalized customer data directly in collection (vs. embedding in orders)
-- **Rationale:** Customers are queried independently during order placement for validation
-- **Alternative:** Embed customer in each order → Increased data duplication, redundant updates when customer info changes
-- **Choice Impact:** Reduces I/O on place_order (single customer lookup) vs. multiple lookups per order
+MongoDB is used in **Mongo mode** endpoints and also as the target of our SQL → Mongo migration (`POST /api/migrate_to_mongo`).
 
 ---
 
-### Collection: `riders`
-```javascript
-{
-  _id: ObjectId,
-  email: string (unique),
-  name: string,
-  phone: string,
-  vehicleType: string,
-  rating: decimal,
-  works_for: [restaurantId] // array of restaurant IDs
-}
-```
-
-**Design Decision:** Denormalized rider-restaurant relationships
-- **Rationale:** Rider assignment query needs quick access to which restaurants they can serve
-- **Alternative:** Separate `rider_works_for` collection with joins → Requires aggregation pipeline, extra I/O
-- **Choice Impact:** O(1) restaurant validation on assignment vs. O(n) relationship lookups
-
----
+## NoSQL structure / collections
 
 ### Collection: `restaurants`
+Created by migration.
+
 ```javascript
 {
   _id: ObjectId,
-  name: string (unique),
-  address: string,
-  menuItems: [
-    {
-      menuItemId: integer,
-      name: string,
-      description: string,
-      price: decimal
-    }
-  ]
+  restaurantId: Number,
+  name: String,      // unique
+  address: String
 }
 ```
 
-**Design Decision:** Menu items embedded within restaurant document
-- **Rationale:** Menu is accessed together with restaurant; no independent menu item queries
-- **Alternative:** Separate `menuItems` collection → Requires N+1 queries or aggregation
-- **Choice Impact:** Single round trip for menu loading vs. separate lookup
+What we did not store here:
+- We do **not** migrate `menu_item` into MongoDB in this project. Orders store their own `orderItems` snapshots.
 
 ---
 
-### Collection: `orders` (Most Complex)
+### Collection: `people`
+Created by migration. We keep customers + riders in one collection with a `type` discriminator.
+
 ```javascript
 {
   _id: ObjectId,
-  orderId: integer (unique, auto-increment),
-  
-  // Customer Info - Denormalized for Report Queries
-  customer: {
-    email: string,
-    name: string
+  personId: Number,
+  type: "customer" | "rider" | "person",
+  name: String,
+  email: String,
+  phone: String | null,
+
+  customer: null | {
+    defaultAddress: String | null,
+    preferredPaymentMethod: String | null
   },
-  
-  // Restaurant Info - Denormalized for Report Queries
+
+  rider: null | {
+    vehicleType: String,
+    rating: Number | null
+  }
+}
+```
+
+---
+
+### Collection: `orders`
+Created by migration and also written directly by Mongo mode endpoints.
+
+```javascript
+{
+  _id: ObjectId,
+  orderId: Number,          // unique
+  createdAt: Date,
+  status: String,           // e.g. "created", "preparing", ...
+  totalAmount: Number,
+
+  // we keep a snapshot for reporting
   restaurant: {
-    restaurantId: integer,
-    name: string,
-    address: string
-  },
-  
-  // Order Items - Embedded (part of order lifecycle)
-  items: [
+    restaurantId: Number,
+    name: String,
+    address: String
+  } | null,
+
+  // we keep a snapshot for reporting
+  customer: {
+    personId: Number,
+    name: String,
+    email: String
+  } | null,
+
+  // embedded because items belong to the order lifecycle
+  orderItems: [
     {
-      menuItemId: integer,
-      name: string,
-      unitPrice: decimal,
-      quantity: integer
+      menuItemId: Number | null,
+      name: String | null,
+      quantity: Number,
+      unitPrice: Number
     }
   ],
-  
-  // Payment Info - Embedded (1:1 with order)
-  payment: {
-    amount: decimal,
-    paymentMethod: string,
-    paid_at: ISODate,
-    status: string // "pending", "paid"
+
+  // embedded 1:1 (may start as null)
+  payment: null | {
+    paymentId: Number | null,
+    amount: Number,
+    method: String,
+    paidAt: Date
   },
-  
-  // Delivery Info - Embedded (1:1 with order)
-  delivery: {
-    deliveryStatus: string, // "created", "assigned", "picked_up", "delivered"
-    assignedAt: ISODate,
+
+  // embedded 1:1 (may start as null)
+  delivery: null | {
+    deliveryId: Number,
+    deliveryStatus: String,
+    assignedAt: Date | null,
     rider: {
-      email: string,
-      name: string
-    }
-  },
-  
-  createdAt: ISODate,
-  status: string // "created", "preparing", "ready", "completed"
+      personId: Number,
+      name: String,
+      email: String,
+      vehicleType: String | null,
+      rating: Number | null
+    } | null
+  }
 }
 ```
 
-**Design Decision: Document Composition Strategy**
+---
 
-| Component | Embedded? | Rationale |
-|-----------|-----------|-----------|
-| Customer | No | Need independent customer lookup; denormalize email/name only for reporting |
-| Restaurant | No (partial) | Need restaurant lookup; embed only name + basic info for reporting |
-| Order Items | Yes | 1:N relationship, items meaningless without order |
-| Payment | Yes | 1:1 relationship, payment lifecycle tied to order |
-| Delivery | Yes | 1:1 relationship, delivery tied to specific order |
+## Design justification (with alternatives)
 
-**Comparison to SQL:**
-- SQL uses 7+ tables with FKs and JOINs
-- MongoDB: Single document with selective denormalization
-- **I/O Impact:** Place Order = 2 lookups (customer, restaurant) + 1 write vs. SQL (5+ table writes)
+- **Why we keep `people` separate from `orders`**
+  - **What we do**: `people` is our lookup table by email (customer/rider). Orders store a small snapshot of the customer/rider/restaurant fields needed for reports.
+  - **Why**: placing an order and assigning a delivery both start with “find person by email”, so we need a clean lookup collection.
+  - **Alternative**: embed full customer/rider docs into every order. That makes reads easy, but updates become messy (lots of duplication).
+
+- **Why we embed `orderItems`, `payment`, `delivery` into the `orders` document**
+  - **What we do**: each operation updates **one order document**.
+  - **Why**: we avoid multi-document transactions and keep our API operations simple/atomic.
+  - **Alternative**: separate `order_items`, `payments`, `deliveries` collections. That looks more relational, but we’d need extra queries/joins (aggregation) for every report.
+
+- **Why we denormalize `restaurant` and `customer` snapshots inside orders**
+  - **What we do**: store `restaurant.name` / `customer.email` etc. directly in each order.
+  - **Why**: our report endpoints can filter + project without additional lookups.
+  - **Alternative**: store only IDs and `$lookup` on every report (more complex + more work at query time).
 
 ---
 
-## Indexing Strategy
+## MongoShell query syntax examples
 
-### Index 1: `idx_orders_orderId_unique`
+Assume we are in the right DB:
+
 ```javascript
-{ orderId: 1 }, { unique: true }
+use ms2
 ```
-**Purpose:** Enforce unique constraint, speed up orderId lookups (pay order, assign delivery)
-**Cardinality:** High | **Selectivity:** Very High
-**Query Impact:** Pay order lookup O(log n) instead O(n)
 
-### Index 2: `idx_orders_student1_report`
+### Look up a customer/rider by email
+
 ```javascript
-{ "restaurant.name": 1, createdAt: -1 }
+db.people.findOne({ type: "customer", email: "customer1@example.com" })
+db.people.findOne({ type: "rider", email: "rider1@example.com" })
 ```
-**Purpose:** Support Student 1 report query (filter by restaurant, sort by date)
-**Cardinality:** Medium (10 restaurants) | **Selectivity:** Medium
-**Query Impact:** Report avoids full collection scan, uses covered index sort
 
-### Index 3: `idx_orders_student2_report`
-```javascript
-{ "delivery.rider.email": 1, createdAt: -1, "delivery.deliveryStatus": 1, "delivery.assignedAt": -1 }
-```
-**Purpose:** Support Student 2 report (filter by rider, status, date range)
-**Cardinality:** Medium | **Selectivity:** High
-**Query Impact:** Eliminates full collection scan for rider filtering
+### Student 1 report-style filter (orders by restaurant + optional date range)
 
-### Index 4: `idx_orders_payment_lookup`
-```javascript
-{ orderId: 1, "payment.paid_at": 1 }
-```
-**Purpose:** Quick payment status checks during pay operation
-**Cardinality:** High | **Selectivity:** Very High
-
-### Index 5-7: Lookup Indexes
-```javascript
-// Riders
-{ email: 1 }, { unique: true }
-
-// Customers
-{ email: 1 }, { unique: true }
-
-// Restaurants
-{ name: 1 }, { unique: true }
-```
-**Purpose:** Fast email/name lookups during form initialization and order operations
-
----
-
-## Query Execution Examples
-
-### Student 1 - Place Order Query
-```javascript
-// Step 1: Verify customer exists (uses idx_customers_email_unique)
-db.customers.findOne({ email: "customer1@example.com" })
-
-// Step 2: Verify restaurant exists (uses idx_restaurants_name_unique)
-db.restaurants.findOne({ name: "Pasta Place" })
-
-// Step 3: Create order (no index needed, write operation)
-db.orders.insertOne({...})
-```
-**Execution:** 2 index lookups + 1 write = O(log n + log n + 1)
-**Without indexes:** 2 full scans + 1 write = O(n + n + 1)
-
-### Student 1 - Report Query
 ```javascript
 db.orders.find({
   "restaurant.name": "Pasta Place",
-  createdAt: { $gte: ISODate("2025-01-01"), $lte: ISODate("2025-01-31") }
-}).sort({ createdAt: -1 }).explain("executionStats")
+  createdAt: { $gte: ISODate("2026-01-01"), $lte: ISODate("2026-01-31") }
+}).sort({ createdAt: -1 })
 ```
-**With Index:** 
-- `totalDocsExamined`: ~5-10 (filtered by index)
-- `executedStages`: IXSCAN → SORT (in-memory) → FETCH
-- **Performance:** ~1ms
 
-**Without Index:**
-- `totalDocsExamined`: ~30 (full collection scan)
-- `executedStages`: COLLSCAN → SORT (spill to disk) → FETCH
-- **Performance:** ~10-50ms
+### Student 2 report-style filter (orders by rider + optional status)
 
-### Student 2 - Assign Delivery
-```javascript
-// Update order with delivery info (uses idx_orders_orderId_unique)
-db.orders.updateOne(
-  { orderId: 1 },
-  { $set: { "delivery.rider.email": "rider1@example.com", ... } }
-)
-```
-**Execution:** Index lookup O(log n) → single document update
-
-### Student 2 - Report Query
 ```javascript
 db.orders.find({
   "delivery.rider.email": "rider1@example.com",
-  "delivery.deliveryStatus": "delivered",
-  "delivery.assignedAt": { $gte: ISODate("2025-01-01") }
-}).sort({ "delivery.assignedAt": -1 }).explain("executionStats")
+  "delivery.deliveryStatus": "delivered"
+}).sort({ "delivery.assignedAt": -1 })
 ```
-**With idx_orders_student2_report:**
-- **Stage 1 (IXSCAN):** Use index for rider email filter
-- **Stage 2 (IXSCAN bounds):** Status filter applied within index
-- **Stage 3 (IXSCAN bounds):** Date range filter applied within index
-- **Stage 4 (SORT):** Index already sorted, no additional sort needed
-- `totalDocsExamined`: 2-5 (only matching docs fetched)
-
-**Without Indexes:**
-- **COLLSCAN:** 30 documents examined
-- **SORT:** All 30 sorted in memory
-- **FILTER:** Status and date range applied after sort
 
 ---
 
-## Comparison: SQL vs MongoDB for Reports
+## Indexing strategy (and execution stats)
 
-### Student 1 Report in SQL
-```sql
-SELECT o.order_id, c.name, r.name, SUM(oi.quantity) as items, o.total_amount, o.status
-FROM `order` o
-JOIN customer c ON o.customer_id = c.customer_id
-JOIN restaurant r ON o.restaurant_id = r.restaurant_id
-LEFT JOIN order_item oi ON o.order_id = oi.order_id
-WHERE r.name = ?
-  AND o.created_at BETWEEN ? AND ?
-GROUP BY o.order_id
-ORDER BY o.created_at DESC;
+We create indexes in `backend/src/db/mongodb.js` (called on `/api/health` and after migration).
+
+### Lookup + integrity
+- `orders`: `idx_orders_orderId_unique` on `{ orderId: 1 }` (unique)
+  - Used by pay/assign endpoints that target an order by `orderId`.
+- `restaurants`: `idx_restaurants_name_unique` on `{ name: 1 }` (unique)
+  - Used to resolve a restaurant by name.
+- `customers/riders`: we index `email` — but note we store people in **`people`**, not `customers`/`riders`.
+  - In our current code, we still attempt to create email indexes on `customers` and `riders`. That’s harmless but unused, because those collections aren’t written by migration.
+- `orders`: `idx_orders_payment_lookup` on `{ orderId: 1, "payment.paid_at": 1 }`
+  - Note: our stored field is `payment.paidAt` (camelCase). So this index currently doesn’t match the actual document shape and won’t help queries unless we align the field name.
+
+### Reporting
+- `idx_orders_student1_report` on `{ "restaurant.name": 1, createdAt: -1 }`
+- `idx_orders_student2_report` on `{ "delivery.rider.email": 1, createdAt: -1, "delivery.deliveryStatus": 1, "delivery.assignedAt": -1 }`
+- We also create two additional “range-friendly” report indexes:
+  - `idx_orders_restaurant_date` on `{ "restaurant.name": 1, createdAt: 1 }`
+  - `idx_orders_rider_assignment` on `{ "delivery.rider.email": 1, "delivery.assignedAt": 1, "delivery.deliveryStatus": 1 }`
+
+### Checking index usage with `explain("executionStats")`
+We don’t guess performance numbers here; we verify the plan:
+
+```javascript
+db.orders.find({ orderId: 1 }).explain("executionStats")
 ```
-**Joins:** 3 | **I/O:** Multiple table scans + group by aggregation
 
-### Same Query in MongoDB
+What we want to see:
+- `executionStages.stage` contains **`IXSCAN`** (not `COLLSCAN`)
+- `totalDocsExamined` is small relative to the collection size
+
+Student 1 report example:
+
 ```javascript
 db.orders.find({
-  "restaurant.name": "Pasta Place",
-  createdAt: { $gte: date1, $lte: date2 }
-}).sort({ createdAt: -1 })
-```
-**Joins:** 0 (data denormalized) | **I/O:** Single collection index scan + fetch
-
-**Result:** MongoDB is 2-3x faster due to:
-1. No joins (denormalized data)
-2. Index on restaurant name + date → single index range scan
-3. Items already embedded → no separate table fetch
-
----
-
-## Design Compromises & Mitigations
-
-### Compromise 1: Data Duplication (Rider & Customer in Orders)
-- **Issue:** Updates to rider/customer name won't reflect in past orders
-- **Mitigation:** Historical data intentionally preserved; in production use application-level denormalization
-- **Alternative:** Reference-only (no duplication) → Requires 2 lookups per report
-
-### Compromise 2: Limited Querying on Embedded Items
-- **Issue:** Cannot directly query items without aggregation pipeline
-- **Mitigation:** Items never queried independently; aggregation pipeline used for analytics if needed
-- **Alternative:** Separate items collection → N+1 query problem
-
-### Compromise 3: No ACID Transactions
-- **Issue:** Multi-document update risks inconsistency if process fails mid-operation
-- **Mitigation:** Each operation (place order, pay, assign) is designed as single-document write
-- **Alternative:** MongoDB multi-document ACID transactions (MongoDB 4.0+) → Available if required
-
----
-
-## Indexing Impact Report
-
-### Before Indexes
-```
-Student 1 Report: COLLSCAN [30 docs examined] ≈ 45ms
-Student 2 Report: COLLSCAN [30 docs examined] ≈ 50ms
-Place Order: 2 COLLSCAN [30 + 10 docs examined] ≈ 30ms
-Assign Delivery: COLLSCAN [30 docs examined] ≈ 20ms
+  "restaurant.name": "Pasta Place"
+}).sort({ createdAt: -1 }).explain("executionStats")
 ```
 
-### After Indexes
+Student 2 report example:
+
+```javascript
+db.orders.find({
+  "delivery.rider.email": "rider1@example.com",
+  "delivery.deliveryStatus": "delivered"
+}).sort({ "delivery.assignedAt": -1 }).explain("executionStats")
 ```
-Student 1 Report: IXSCAN [5 docs examined] ≈ 2ms  (22x faster)
-Student 2 Report: IXSCAN [3 docs examined] ≈ 1ms  (50x faster)
-Place Order: 2 IXSCAN [unique lookups] ≈ 0.5ms   (60x faster)
-Assign Delivery: IXSCAN [1 doc examined] ≈ 0.1ms (200x faster)
-```
-
-**Index Size:** ~12KB total (negligible on 30 document collection)
-**Maintenance:** Automatic on write operations (acceptable overhead)
-
----
-
-## Conclusion
-
-MongoDB design prioritizes:
-1. **Reporting performance** through selective denormalization
-2. **Write simplicity** through document composition (no complex multi-table updates)
-3. **Query efficiency** through comprehensive indexing strategy
-
-The schema is optimized for the specific use cases (place order, pay, assign delivery, generate reports) rather than generic relational normalization.
