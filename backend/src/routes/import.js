@@ -37,6 +37,78 @@ importRouter.get("/riders", async (_req, res, next) => {
   }
 });
 
+importRouter.get("/customers", async (_req, res, next) => {
+  try {
+    const customers = await withConn((conn) =>
+      conn.query(
+        `
+        SELECT
+          c.customer_id AS customerId,
+          p.name AS name,
+          p.email AS email,
+          c.default_address AS defaultAddress
+        FROM customer c
+        JOIN person p ON p.person_id = c.customer_id
+        ORDER BY p.name ASC
+        `
+      )
+    );
+    res.json({ ok: true, customers });
+  } catch (e) {
+    next(e);
+  }
+});
+
+importRouter.get("/restaurants", async (_req, res, next) => {
+  try {
+    const restaurants = await withConn((conn) =>
+      conn.query(
+        `
+        SELECT
+          restaurant_id AS restaurantId,
+          name,
+          address
+        FROM restaurant
+        ORDER BY name ASC
+        `
+      )
+    );
+    res.json({ ok: true, restaurants });
+  } catch (e) {
+    next(e);
+  }
+});
+
+importRouter.get("/menu_items", async (req, res, next) => {
+  try {
+    const restaurantName = req.query.restaurantName;
+    if (!restaurantName) {
+      return res.json({ ok: true, menuItems: [] });
+    }
+
+    const menuItems = await withConn((conn) =>
+      conn.query(
+        `
+        SELECT
+          m.menu_item_id AS menuItemId,
+          m.name,
+          m.description,
+          m.price,
+          r.name AS restaurantName
+        FROM menu_item m
+        JOIN restaurant r ON r.restaurant_id = m.restaurant_id
+        WHERE r.name = ?
+        ORDER BY m.name ASC
+        `,
+        [restaurantName]
+      )
+    );
+    res.json({ ok: true, menuItems });
+  } catch (e) {
+    next(e);
+  }
+});
+
 importRouter.get("/orders", async (req, res, next) => {
   try {
     const limit = Number(req.query.limit || 50);

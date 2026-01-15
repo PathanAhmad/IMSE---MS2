@@ -36,6 +36,15 @@ services:
     ports:
       - "3000:3000"
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
 volumes:
   mariadb_data:
   mongo_data:
