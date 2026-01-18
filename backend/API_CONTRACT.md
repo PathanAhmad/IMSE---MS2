@@ -14,7 +14,20 @@ This is the minimal contract the frontend can call. I keep it simple and explici
 **200**
 
 ```json
-{ "ok": true }
+{
+  "ok": true,
+  "activeMode": "sql",
+  "mariadb": { "ok": true },
+  "mongo": {
+    "ok": true,
+    "counts": { "restaurants": 10, "people": 30, "orders": 30 },
+    "migration": {
+      "source": "mariadb",
+      "lastMigrationAt": "2026-01-18T12:00:00.000Z",
+      "migrated": { "restaurants": 10, "people": 30, "orders": 30 }
+    }
+  }
+}
 ```
 
 ## Import / Reset (MariaDB)

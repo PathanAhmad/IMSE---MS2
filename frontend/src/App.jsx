@@ -6,7 +6,8 @@ import api from './api'
 
 function App() {
   const [activeRole, setActiveRole] = useState('customer')
-  const [mode, setMode] = useState('sql')
+  const [mode, setMode] = useState('sql') // derived from /api/health (switches after migration)
+  const [systemStatus, setSystemStatus] = useState(null)
   const [actingCustomerEmail, setActingCustomerEmail] = useState('')
   const [actingRiderEmail, setActingRiderEmail] = useState('')
   const [customers, setCustomers] = useState([])
@@ -14,9 +15,25 @@ function App() {
   const [showAdminModal, setShowAdminModal] = useState(false)
 
   useEffect(() => {
+    refreshSystemStatus()
     loadCustomers()
     loadRiders()
   }, [])
+
+  const refreshSystemStatus = async () => {
+    try {
+      const response = await api.get('/health')
+      setSystemStatus(response.data)
+      if (response.data?.activeMode === 'mongo' || response.data?.activeMode === 'sql') {
+        setMode(response.data.activeMode)
+      }
+    } catch (error) {
+      // If health fails, keep the UI functional in SQL mode but show no status.
+      console.error('Error loading system status:', error)
+      setSystemStatus(null)
+      setMode('sql')
+    }
+  }
 
   const loadCustomers = async () => {
     try {
@@ -85,22 +102,21 @@ function App() {
               </div>
             </div>
             <div className="col-md-4">
-              <label className="form-label fw-bold">Database Mode</label>
-              <div className="btn-group w-100" role="group">
-                <button
-                  type="button"
-                  className={`btn ${mode === 'sql' ? 'btn-primary' : 'btn-outline-primary'}`}
-                  onClick={() => setMode('sql')}
-                >
-                  SQL (MariaDB)
-                </button>
-                <button
-                  type="button"
-                  className={`btn ${mode === 'mongo' ? 'btn-primary' : 'btn-outline-primary'}`}
-                  onClick={() => setMode('mongo')}
-                >
-                  Mongo (NoSQL)
-                </button>
+              <label className="form-label fw-bold">Data Source</label>
+              <div className="d-flex flex-column gap-1">
+                <div>
+                  <span className={`badge ${mode === 'mongo' ? 'bg-primary' : 'bg-secondary'}`}>
+                    {mode === 'mongo' ? 'MongoDB (after migration)' : 'MariaDB (before migration)'}
+                  </span>
+                </div>
+                <small className="text-muted">
+                  Mode switches automatically after running <strong>Migrate SQL → MongoDB</strong> in Admin Setup.
+                </small>
+                {systemStatus?.mongo?.migration?.lastMigrationAt && (
+                  <small className="text-muted">
+                    Last migration: {new Date(systemStatus.mongo.migration.lastMigrationAt).toLocaleString()}
+                  </small>
+                )}
               </div>
             </div>
             {activeRole === 'customer' && (
@@ -155,7 +171,13 @@ function App() {
       )}
 
       {showAdminModal && (
-        <AdminSection onClose={() => setShowAdminModal(false)} />
+        <AdminSection
+          onClose={() => {
+            setShowAdminModal(false)
+            refreshSystemStatus()
+          }}
+          onAfterMigrate={refreshSystemStatus}
+        />
       )}
     </div>
   )

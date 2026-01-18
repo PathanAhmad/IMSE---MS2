@@ -160,6 +160,14 @@ db.orders.find({
 
 We create indexes in `backend/src/db/mongodb.js` (called on `/api/health` and after migration).
 
+### Migration verification (visible proof)
+After running `POST /api/migrate_to_mongo`, we store a small metadata document in `meta` (`_id: "migration"`).
+`GET /api/health` returns:
+- Mongo collection counts (`restaurants`, `people`, `orders`)
+- `mongo.migration.lastMigrationAt` + migrated counts
+
+The frontend uses this to show a **Data Source** badge and automatically switch to Mongo endpoints after migration.
+
 ### Lookup + integrity
 - `orders`: `idx_orders_orderId_unique` on `{ orderId: 1 }` (unique)
   - Used by pay/assign endpoints that target an order by `orderId`.

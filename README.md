@@ -5,6 +5,8 @@ We built a small food delivery demo that works in **two modes**:
 - **SQL mode** (MariaDB): normal relational tables + joins
 - **Mongo mode** (MongoDB): documents optimized for our specific API use-cases
 
+There is **no manual SQL/Mongo toggle** in the UI. The app **switches to Mongo mode automatically after migration** (as required by the MS2 guidelines).
+
 ---
 
 ## Startup instructions
@@ -33,6 +35,8 @@ Then run:
 - **Check Health** (pings MariaDB + ensures Mongo indexes exist)
 - **Import & Reset Data** (creates schema + inserts demo data)
 - **Migrate to MongoDB** (copies the SQL snapshot into MongoDB)
+
+After migration, the main screen shows **Data Source: MongoDB (after migration)** and Student 1/2 use cases + reports run against MongoDB endpoints.
 
 ---
 

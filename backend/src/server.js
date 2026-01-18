@@ -3,7 +3,7 @@ const cors = require("cors");
 
 const { config } = require("./config");
 const { withConn } = require("./db/mariadb");
-const { ensureMongoIndexes } = require("./db/mongodb");
+const { ensureMongoIndexes, getMongo } = require("./db/mongodb");
 
 const { importRouter } = require("./routes/import");
 const { student1Router } = require("./routes/student1");
@@ -20,7 +20,32 @@ async function main() {
     // I run a quick DB ping so I know the container wiring is correct.
     await withConn((conn) => conn.query("SELECT 1"));
     await ensureMongoIndexes();
-    res.json({ ok: true });
+    const { db } = await getMongo();
+
+    // These counts + migration info make it easy to prove "SQL -> Mongo migration" worked.
+    const [restaurants, people, orders] = await Promise.all([
+      db.collection("restaurants").countDocuments({}),
+      db.collection("people").countDocuments({}),
+      db.collection("orders").countDocuments({})
+    ]);
+
+    const migration = await db.collection("meta").findOne(
+      { _id: "migration" },
+      { projection: { _id: 0, source: 1, lastMigrationAt: 1, migrated: 1 } }
+    );
+
+    const mongoReady = Boolean(migration?.lastMigrationAt) && orders > 0;
+
+    res.json({
+      ok: true,
+      activeMode: mongoReady ? "mongo" : "sql",
+      mariadb: { ok: true },
+      mongo: {
+        ok: true,
+        counts: { restaurants, people, orders },
+        migration: migration || null
+      }
+    });
   });
 
   app.use("/api", importRouter);

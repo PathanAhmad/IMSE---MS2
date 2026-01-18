@@ -5,7 +5,7 @@ const ADMIN_SESSION_KEY = 'imse_ms2_admin_authed'
 // Frontend-only gate for the demo (NOT real security).
 const ADMIN_ACCESS_CODE = 'imse-ms2'
 
-function AdminSection({ onClose }) {
+function AdminSection({ onClose, onAfterMigrate }) {
   const [accessCode, setAccessCode] = useState('')
   const [authError, setAuthError] = useState(null)
   const [isAuthed, setIsAuthed] = useState(false)
@@ -79,6 +79,9 @@ function AdminSection({ onClose }) {
     try {
       const response = await api.post('/migrate_to_mongo')
       setMigrateResult({ success: true, data: response.data })
+      if (typeof onAfterMigrate === 'function') {
+        await onAfterMigrate()
+      }
     } catch (error) {
       setMigrateResult({ 
         success: false, 
@@ -144,7 +147,12 @@ function AdminSection({ onClose }) {
               {healthStatus && (
                 <div className={`alert mt-3 ${healthStatus.success ? 'alert-success' : 'alert-danger'}`}>
                   {healthStatus.success ? (
-                    <div>System is healthy. MariaDB and MongoDB connections verified.</div>
+                    <>
+                      <div>
+                        System is healthy. Active mode: <strong>{healthStatus.data.activeMode || 'unknown'}</strong>
+                      </div>
+                      <pre className="mt-2 mb-0 small">{JSON.stringify(healthStatus.data, null, 2)}</pre>
+                    </>
                   ) : (
                     <>
                       <div>Error: {healthStatus.error.error}</div>
