@@ -177,6 +177,7 @@ function App() {
             refreshSystemStatus()
           }}
           onAfterMigrate={refreshSystemStatus}
+          onAfterImportReset={refreshSystemStatus}
         />
       )}
     </div>

@@ -5,7 +5,7 @@ const ADMIN_SESSION_KEY = 'imse_ms2_admin_authed'
 // Frontend-only gate for the demo (NOT real security).
 const ADMIN_ACCESS_CODE = 'imse-ms2'
 
-function AdminSection({ onClose, onAfterMigrate }) {
+function AdminSection({ onClose, onAfterMigrate, onAfterImportReset }) {
   const [accessCode, setAccessCode] = useState('')
   const [authError, setAuthError] = useState(null)
   const [isAuthed, setIsAuthed] = useState(false)
@@ -63,6 +63,9 @@ function AdminSection({ onClose, onAfterMigrate }) {
     try {
       const response = await api.post('/import_reset')
       setImportResult({ success: true, data: response.data })
+      if (typeof onAfterImportReset === 'function') {
+        await onAfterImportReset()
+      }
     } catch (error) {
       setImportResult({ 
         success: false, 
