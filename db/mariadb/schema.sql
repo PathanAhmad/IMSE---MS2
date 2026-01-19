@@ -1,5 +1,4 @@
 -- MariaDB schema for MS2 (Food Delivery)
--- I keep this explicit and close to the ER diagram.
 
 CREATE TABLE IF NOT EXISTS person (
   person_id INT AUTO_INCREMENT PRIMARY KEY,

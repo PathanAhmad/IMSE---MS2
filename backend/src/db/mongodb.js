@@ -1,7 +1,9 @@
-// File flow:
-// - I lazily connect to Mongo and reuse one client.
-// - I create indexes we rely on (uniques + report/query speed).
-// - I export helpers used by routes and migration code.
+/*
+  What this file does:
+  I keep MongoDB access in one place. I open a single MongoClient lazily (first call wins)
+  and then reuse it for the lifetime of the Node process. I also create the indexes our
+  API depends on so common lookups and reports stay fast, and so a few fields are truly unique.
+*/
 
 const { MongoClient } = require("mongodb");
 const { config } = require("../config");
@@ -10,7 +12,10 @@ let client;
 
 async function getMongo() {
   if ( !client ) {
-    // I keep a single MongoClient for the whole app.
+    /*
+      I only create/connect the client once.
+      Everything else in the app should call `getMongo()` and reuse this connection.
+    */
     client = new MongoClient(config.mongodb.uri);
     await client.connect();
   }
@@ -22,41 +27,54 @@ async function getMongo() {
 async function ensureMongoIndexes() {
   const { db } = await getMongo();
 
-  // ===== UNIQUE CONSTRAINTS =====
-  // Enforce orderId uniqueness so Student 1 can safely allocate numeric order IDs
+  /*
+    Uniqueness guarantees:
+    I enforce uniqueness in Mongo itself (not just in application code) so we can't end up
+    with duplicate IDs/emails even under concurrency.
+  */
   await db.collection("orders").createIndex({ orderId: 1 }, { name: "idx_orders_orderId_unique", unique: true });
 
-  // People collection: quick lookup by email for both customers and riders.
-  // (We store both roles in `people`, not in separate `customers` / `riders` collections.)
+  /*
+    Quick login/lookup by email:
+    I store both customers and riders in `people`, so email needs to be fast and unique there.
+  */
   await db.collection("people").createIndex({ email: 1 }, { name: "idx_people_email_unique", unique: true });
 
-  // ===== STUDENT 1 INDEXES (Order Management & Reports) =====
-  // Place Order & Report: Filter by restaurant name, sort by creation date
+  /*
+    Student 1 (orders + report):
+    I index by restaurant name and creation time because the UI/report filters by restaurant
+    and tends to show newest orders first.
+  */
   await db.collection("orders").createIndex(
     { "restaurant.name": 1, createdAt: -1 },
     { name: "idx_orders_student1_report" }
   );
 
-  // Pay Order: Look up order by orderId for payment.
-  // Already covered by unique constraint above, but keep a composite index aligned to our document shape.
+  /*
+    Payment lookup:
+    `orderId` is already unique, but I keep a named index we can rely on (and evolve) that matches
+    how the payment flow queries orders.
+  */
   try {
-    // I drop old index names so reruns do not fail.
+    // If an old/previously-named index exists, I remove it so reruns don’t error.
     await db.collection("orders").dropIndex("idx_orders_payment_lookup");
   } catch (_e) {
-    // ignore: index might not exist / might already be correct
+    // It's fine if the index doesn't exist yet.
   }
   await db.collection("orders").createIndex(
     { orderId: 1, "payment.paidAt": 1 },
     { name: "idx_orders_payment_lookup" }
   );
 
-  // ===== STUDENT 2 INDEXES (Delivery Management & Reports) =====
-  // Assign & Report: Filter by rider email, date range, and delivery status
+  /*
+    Student 2 (delivery + report):
+    I index by rider email + timestamps + delivery status because assignment/reporting filters on those.
+  */
   try {
-    // I drop earlier index variants to keep names consistent.
+    // I clean up earlier index variants to keep the names consistent across runs.
     await db.collection("orders").dropIndex("idx_orders_delivery_rider_date_status");
   } catch (_e) {
-    // ignore: index might not exist (cleanup from earlier iterations)
+    // It's fine if it never existed (leftover from earlier iterations).
   }
 
   await db.collection("orders").createIndex(
@@ -64,24 +82,29 @@ async function ensureMongoIndexes() {
     { name: "idx_orders_student2_report" }
   );
 
-  // Restaurants collection: Quick lookup by name for menu and ordering
+  /*
+    Restaurant lookup:
+    I keep restaurant names unique and fast to query because ordering/menu endpoints look them up by name.
+  */
   await db.collection("restaurants").createIndex(
     { name: 1 },
     { name: "idx_restaurants_name_unique", unique: true }
   );
 
-  // ===== REPORTING INDEXES =====
-  // Student 1: Orders by restaurant and date range (supports date filtering)
+  /*
+    Extra reporting support:
+    These are more “general” indexes that help date-range reporting patterns.
+  */
   await db.collection("orders").createIndex(
     { "restaurant.name": 1, createdAt: 1 },
     { name: "idx_orders_restaurant_date" }
   );
 
-  // Student 2: Orders by rider and date range (supports date and status filtering)
+  // Rider assignment/report queries are built around rider + status + assignedAt.
   try {
     await db.collection("orders").dropIndex("idx_orders_rider_assignment");
   } catch (_e) {
-    // ignore
+    // It's fine if it doesn't exist yet.
   }
   await db.collection("orders").createIndex(
     { "delivery.rider.email": 1, "delivery.deliveryStatus": 1, "delivery.assignedAt": -1 },

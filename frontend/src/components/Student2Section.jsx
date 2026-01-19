@@ -331,7 +331,6 @@ function Student2Section({ mode, actingRiderEmail }) {
     </>
     );
   };
-  }
 
   const renderActiveView = function() {
     return (
@@ -400,7 +399,6 @@ function Student2Section({ mode, actingRiderEmail }) {
     </>
     );
   };
-  }
 
   const renderCompletedView = function() {
     return (
@@ -456,7 +454,6 @@ function Student2Section({ mode, actingRiderEmail }) {
     </>
     );
   };
-  }
 
   const renderAnalyticsView = function() {
     return (
@@ -574,7 +571,8 @@ function Student2Section({ mode, actingRiderEmail }) {
         </div>
       )}
     </>
-  )
+    );
+  };
 
   return (
     <div className="card mb-4">

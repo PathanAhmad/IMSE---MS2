@@ -1,46 +1,14 @@
 import { useEffect, useState } from 'react'
 import api from '../api'
 
-const ADMIN_SESSION_KEY = 'imse_ms2_admin_authed'
-// Frontend-only gate for the demo (NOT real security).
-const ADMIN_ACCESS_CODE = 'imse-ms2'
-
 function AdminSection({ onClose, onAfterMigrate, onAfterImportReset }) {
-  const [accessCode, setAccessCode] = useState('')
-  const [authError, setAuthError] = useState(null)
-  const [isAuthed, setIsAuthed] = useState(false)
-
   const [healthStatus, setHealthStatus] = useState(null)
   const [importResult, setImportResult] = useState(null)
   const [migrateResult, setMigrateResult] = useState(null)
   const [loading, setLoading] = useState(false)
 
-  useEffect(function() {
-    setIsAuthed(sessionStorage.getItem(ADMIN_SESSION_KEY) === '1')
-  }, [])
-
-  const handleLogin = (e) => {
-    e.preventDefault()
-    setAuthError(null)
-
-    if ( accessCode.trim() !== ADMIN_ACCESS_CODE ) {
-      setAuthError('Invalid access code.')
-      return
-    }
-
-    sessionStorage.setItem(ADMIN_SESSION_KEY, '1')
-    setIsAuthed(true)
-    setAccessCode('')
-  }
-
-  const handleLogout = () => {
-    sessionStorage.removeItem(ADMIN_SESSION_KEY)
-    setIsAuthed(false)
-    setAuthError(null)
-    setHealthStatus(null)
-    setImportResult(null)
-    setMigrateResult(null)
-  }
+  // I keep this effect so the component remains stable if we later add setup-time side effects.
+  useEffect(function() {}, [])
 
   const handleHealthCheck = async () => {
     setLoading(true)
@@ -101,42 +69,9 @@ function AdminSection({ onClose, onAfterMigrate, onAfterImportReset }) {
         <div className="modal-content">
           <div className="modal-header">
             <h2 className="modal-title">System Setup & Management</h2>
-            <div className="d-flex gap-2">
-              {isAuthed && (
-                <button className="btn btn-outline-secondary btn-sm" onClick={handleLogout} type="button">
-                  Lock
-                </button>
-              )}
-              <button type="button" className="btn-close" onClick={onClose}></button>
-            </div>
+            <button type="button" className="btn-close" onClick={onClose}></button>
           </div>
           <div className="modal-body">
-        {!isAuthed ? (
-          <>
-            <div className="alert alert-info mt-3" role="alert">
-              Setup actions are protected. Enter the demo access code to continue.
-            </div>
-
-            <form onSubmit={handleLogin} className="mt-3" style={{ maxWidth: 420 }}>
-              <label className="form-label">Access Code</label>
-              <input
-                className="form-control"
-                type="password"
-                value={accessCode}
-                onChange={function(e) {
-                  setAccessCode(e.target.value)
-                }}
-                placeholder="Enter access code"
-                autoComplete="off"
-                required
-              />
-              {authError && <div className="text-danger mt-2">{authError}</div>}
-              <button className="btn btn-primary mt-3" type="submit">
-                Unlock
-              </button>
-            </form>
-          </>
-        ) : (
           <>
         
             <div className="alert alert-warning mt-3" role="alert">
@@ -220,7 +155,6 @@ function AdminSection({ onClose, onAfterMigrate, onAfterImportReset }) {
               )}
             </div>
           </>
-        )}
           </div>
         </div>
       </div>

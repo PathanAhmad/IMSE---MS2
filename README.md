@@ -28,9 +28,6 @@ After it's running:
 ### First-time demo setup (from the UI)
 In the frontend, open the **Admin** tab.
 
-**Admin demo login (frontend-only):**
-- **Access code:** `imse-ms2`
-
 Then run:
 - **Check Health** (pings MariaDB + ensures Mongo indexes exist)
 - **Import & Reset Data** (creates schema + inserts demo data)
@@ -61,16 +58,6 @@ Use this if you want a clean database state.
 docker compose down -v
 ```
 
-### Common checks
-
-```bash
-docker compose ps
-docker compose logs -f backend
-docker compose logs -f frontend
-```
-
----
-
 ## Architecture overview
 
 ### High-level flow
@@ -84,3 +71,19 @@ docker compose logs -f frontend
 - `backend/`: Express API + DB adapters
 - `db/mariadb/schema.sql`: SQL schema used by the import/reset step
 - `docker-compose.yml`: wires all services together
+
+---
+
+## AI tools (responsible use)
+
+We used AI tools to brainstorm UI/UX ideas and to improve wording in documentation.
+We did **not** copy-paste AI-generated code, and we did not use AI to “solve” the assignment for us.
+All code and final decisions were made and verified by us.
+
+---
+
+## Troubleshooting
+
+- If the UI is empty or errors: check logs (`docker compose logs -f backend` / `docker compose logs -f frontend`).
+- If data looks wrong: in **Admin**, run **Check Health → Import & Reset Data → Migrate to MongoDB** (in that order).
+- If nothing loads: confirm `http://localhost:5173` and `http://localhost:3000/api` are reachable and `docker compose ps` shows all containers up.
