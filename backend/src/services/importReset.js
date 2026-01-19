@@ -1,3 +1,8 @@
+// File flow:
+// - I recreate the schema, wipe old rows, then insert fresh demo data into MariaDB.
+// - I keep the data deterministic when SEED is set.
+// - After the SQL reset, I also clear Mongo so the app does not use stale migrated data.
+
 const { withTx } = require("../db/mariadb");
 const { config } = require("../config");
 const { readSchemaSql } = require("../utils/schema");
@@ -9,7 +14,7 @@ function randInt(rng, min, max) {
 
 function pick(rng, arr) {
   if ( !Array.isArray(arr) || arr.length === 0 ) {
-    // I fail loudly (with stack) so empty-pick bugs are always traceable.
+    // I fail loudly so empty-pick bugs are always traceable.
     throw new Error("pick() called with empty array");
   }
   return arr[randInt(rng, 0, arr.length - 1)];
@@ -31,9 +36,7 @@ async function recreateSchema(conn) {
 }
 
 async function clearAll(conn) {
-  // Root cause note:
-  // MariaDB/InnoDB can reject TRUNCATE for parent tables that are referenced by FKs.
-  // So I use DELETE (DML) in FK-safe order, then reset AUTO_INCREMENT where relevant.
+  // I delete in FK-safe order because TRUNCATE can fail when FKs are involved.
   const deleteOrder = [
     "menu_item_category",
     "rider_works_for",
@@ -63,10 +66,7 @@ async function clearAll(conn) {
 async function clearMongoAfterSqlReset() {
   const { db } = await getMongo();
 
-  // Root cause fix:
-  // Import/Reset refreshes MariaDB, so we must clear any previous "migration happened"
-  // marker in Mongo. Otherwise /api/health would keep reporting activeMode="mongo"
-  // and the UI would keep calling Mongo endpoints with stale data.
+  // After I reset SQL, I also clear Mongo and the migration marker so the UI does not read stale data.
   await Promise.all([
     db.collection("restaurants").deleteMany({}),
     db.collection("people").deleteMany({}),
@@ -161,10 +161,7 @@ async function importResetMariaDb() {
     }
 
     // Menu items
-    // Root cause fix:
-    // If menu items are assigned to restaurants purely at random, a restaurant can (rarely) end up
-    // with zero items. Order generation later picks a menu item for the chosen restaurant, so
-    // we guarantee every restaurant gets at least 1 menu item.
+    // I make sure every restaurant gets at least one menu item, otherwise order generation can break.
     const menuItemTotal = 60;
     if ( restaurantIds.length > menuItemTotal ) {
       throw new Error(`Cannot generate menu items: ${restaurantIds.length} restaurants but only ${menuItemTotal} items`);

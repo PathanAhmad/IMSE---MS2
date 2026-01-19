@@ -1,3 +1,8 @@
+// File flow:
+// - I expose Student 2 endpoints for assigning deliveries and reporting on deliveries.
+// - I support both MariaDB and Mongo with matching output shapes.
+// - I validate inputs, write safely, and return JSON for the UI.
+
 const express = require("express");
 
 const { withTx, withConn } = require("../db/mariadb");
@@ -21,6 +26,7 @@ function notFound(message) {
 
 student2Router.post("/student2/sql/assign_delivery", async function(req, res, next) {
   try {
+    // I validate inputs, then insert or update the delivery row in one transaction.
     let riderEmail;
     
     if ( req.body?.riderEmail ) {
@@ -89,12 +95,14 @@ student2Router.post("/student2/sql/assign_delivery", async function(req, res, ne
       );
 
       if ( !existing.length ) {
+        // First assignment: I set assignedAt to now.
         await conn.query(
           "INSERT INTO delivery (order_id, rider_id, assigned_at, delivery_status) VALUES (?, ?, ?, ?)",
           [orderId, riderId, now, deliveryStatus]
         );
       } 
       else {
+        // Re-assign: I keep assignedAt stable if it already exists.
         const assignedAtWasNull = existing[0].assignedAt == null;
         let assignedAt;
         
@@ -142,6 +150,7 @@ student2Router.post("/student2/sql/assign_delivery", async function(req, res, ne
 
 student2Router.get("/student2/sql/report", async function(req, res, next) {
   try {
+    // I build optional filters (date range + status) and run one SQL report query.
     let riderEmail;
     
     if ( req.query.riderEmail ) {
@@ -245,6 +254,7 @@ student2Router.get("/student2/sql/report", async function(req, res, next) {
 
 student2Router.post("/student2/mongo/assign_delivery", async function(req, res, next) {
   try {
+    // I assign a delivery in Mongo and make sure assignedAt is only set once.
     let riderEmail;
     
     if ( req.body?.riderEmail ) {
@@ -290,17 +300,13 @@ student2Router.post("/student2/mongo/assign_delivery", async function(req, res, 
       throw notFound("rider not found");
     }
 
-    // IMPORTANT: this must be atomic. If two concurrent requests assign the same order,
-    // we must preserve the first assignment time (assignedAt) and never overwrite it.
-    // Using a pipeline update with $ifNull ensures assignedAt is only set if missing/null.
+    // I do this as a pipeline update so assignedAt is set once and never overwritten.
     const updateResult = await db.collection("orders").updateOne(
       { orderId },
       [
         {
           $set: {
-            // NOTE: Some orders are created with delivery: null (see Student 1 mongo create_order).
-            // Setting subfields on a null parent throws in MongoDB, so I always set the full delivery object.
-            // I also ensure deliveryId exists for report output + API contract consistency.
+            // Some orders start with delivery: null, so I always write the full delivery object.
             delivery: {
               $let: {
                 vars: { existing: { $ifNull: ["$delivery", {}] } },
@@ -355,6 +361,7 @@ student2Router.post("/student2/mongo/assign_delivery", async function(req, res, 
 
 student2Router.get("/student2/mongo/report", async function(req, res, next) {
   try {
+    // I build a Mongo match object and return a projected report view.
     let riderEmail;
     
     if ( req.query.riderEmail ) {
@@ -462,6 +469,7 @@ student2Router.get("/student2/mongo/report", async function(req, res, next) {
 
 student2Router.get("/student2/mongo/orders", async function(req, res, next) {
   try {
+    // I query orders from Mongo, then map them into the same shape as the SQL endpoint.
     let status;
     
     if ( req.query.status ) {

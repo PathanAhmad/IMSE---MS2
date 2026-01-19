@@ -1,3 +1,8 @@
+// File flow:
+// - I create one MariaDB pool for the whole backend.
+// - I expose `withConn` for safe connection handling.
+// - I expose `withTx` for transactions with commit/rollback.
+
 const mariadb = require("mariadb");
 const { config } = require("../config");
 
@@ -13,6 +18,7 @@ const pool = mariadb.createPool({
 });
 
 async function withConn(fn) {
+  // I always release the connection, even on errors.
   const conn = await pool.getConnection();
   
   try {
@@ -27,6 +33,7 @@ async function withConn(fn) {
 
 async function withTx(fn) {
   return withConn(async function(conn) {
+    // I wrap the callback in a transaction so partial writes do not leak out.
     await conn.beginTransaction();
     
     try {

@@ -1,3 +1,9 @@
+// File flow:
+// - I create the Express app and set middleware.
+// - I expose a health endpoint that checks MariaDB + Mongo and shows counts.
+// - I mount the API routers.
+// - I return JSON errors with stack traces, then start listening.
+
 const express = require("express");
 const cors = require("cors");
 
@@ -13,20 +19,22 @@ const { migrateRouter } = require("./routes/migrate");
 async function main() {
   const app = express();
 
+  // I keep CORS open for local dev and the UI.
   app.use(cors());
+  // I accept JSON bodies (small limit so requests stay sane).
   app.use(express.json({ limit: "1mb" }));
 
 
 
   app.get("/api/health", async function(_req, res) {
-    // I run a quick DB ping so I know the container wiring is correct.
+    // I run quick DB checks so I know the wiring is correct.
     await withConn(function(conn) {
       return conn.query("SELECT 1");
     });
     await ensureMongoIndexes();
     const { db } = await getMongo();
 
-    // These counts + migration info make it easy to prove "SQL -> Mongo migration" worked.
+    // I return simple counts + migration info so it's easy to prove migration worked.
     const [restaurants, people, orders] = await Promise.all([
       db.collection("restaurants").countDocuments({}),
       db.collection("people").countDocuments({}),
@@ -40,6 +48,7 @@ async function main() {
 
     let activeMode;
     
+    // If we have a migration marker and at least some orders, I treat Mongo as the active mode.
     if ( Boolean(migration?.lastMigrationAt) && orders > 0 ) {
       activeMode = "mongo";
     } 
@@ -68,6 +77,7 @@ async function main() {
 
 
 
+  // I keep all API routes under `/api`.
   app.use("/api", importRouter);
   app.use("/api", student1Router);
   app.use("/api", student2Router);

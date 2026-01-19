@@ -1,3 +1,8 @@
+// File flow:
+// - I take a snapshot from SQL (restaurants, people, orders).
+// - I clear the Mongo collections, then insert the transformed docs.
+// - I write one migration marker so `/api/health` and the UI can detect the mode.
+
 const { withConn } = require("../db/mariadb");
 const { getMongo, ensureMongoIndexes } = require("../db/mongodb");
 
@@ -8,11 +13,13 @@ async function migrateSqlToMongo() {
   const { db } = await getMongo();
 
 
+  // I clear collections first so the migration is a clean replace.
   await db.collection("restaurants").deleteMany({});
   await db.collection("people").deleteMany({});
   await db.collection("orders").deleteMany({});
 
 
+  // I only insert if there is something to insert (avoids `insertMany([])`).
   if ( sql.restaurants.length ) {
     await db.collection("restaurants").insertMany(sql.restaurants);
   }
@@ -26,6 +33,7 @@ async function migrateSqlToMongo() {
   }
 
 
+  // I create indexes after inserting so the initial load is fast.
   await ensureMongoIndexes();
 
 
@@ -57,6 +65,7 @@ async function migrateSqlToMongo() {
 
 async function readSqlSnapshot() {
   return withConn(async function(conn) {
+    // I read the base tables and then stitch them into the Mongo document shape.
     const restaurants = await conn.query(
       `SELECT restaurant_id AS restaurantId, name, address FROM restaurant ORDER BY restaurant_id`
     );

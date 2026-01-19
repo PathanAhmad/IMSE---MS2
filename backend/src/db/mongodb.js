@@ -1,3 +1,8 @@
+// File flow:
+// - I lazily connect to Mongo and reuse one client.
+// - I create indexes we rely on (uniques + report/query speed).
+// - I export helpers used by routes and migration code.
+
 const { MongoClient } = require("mongodb");
 const { config } = require("../config");
 
@@ -35,6 +40,7 @@ async function ensureMongoIndexes() {
   // Pay Order: Look up order by orderId for payment.
   // Already covered by unique constraint above, but keep a composite index aligned to our document shape.
   try {
+    // I drop old index names so reruns do not fail.
     await db.collection("orders").dropIndex("idx_orders_payment_lookup");
   } catch (_e) {
     // ignore: index might not exist / might already be correct
@@ -47,6 +53,7 @@ async function ensureMongoIndexes() {
   // ===== STUDENT 2 INDEXES (Delivery Management & Reports) =====
   // Assign & Report: Filter by rider email, date range, and delivery status
   try {
+    // I drop earlier index variants to keep names consistent.
     await db.collection("orders").dropIndex("idx_orders_delivery_rider_date_status");
   } catch (_e) {
     // ignore: index might not exist (cleanup from earlier iterations)

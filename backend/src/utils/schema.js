@@ -1,3 +1,7 @@
+// File flow:
+// - I read the SQL schema from disk.
+// - I return it as a string so MariaDB can execute it.
+
 const fs = require("fs");
 
 function readSchemaSql(schemaSqlPath) {

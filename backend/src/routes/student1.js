@@ -1,3 +1,8 @@
+// File flow:
+// - I expose Student 1 endpoints for placing orders, paying, and generating reports.
+// - I support both MariaDB and Mongo with the same response shape.
+// - I validate inputs, write atomically, and return consistent JSON for the UI.
+
 const express = require("express");
 
 const { withTx, withConn } = require("../db/mariadb");
@@ -26,6 +31,7 @@ function conflict(message) {
 
 
 function parseIsoDateOrNull(v, fieldName) {
+  // I accept empty values as null, otherwise I enforce a real ISO date.
   if ( v == null || String(v).trim() === "" ) {
     return null;
   }
@@ -37,6 +43,7 @@ function parseIsoDateOrNull(v, fieldName) {
 }
 
 function toPositiveInt(v, fieldName) {
+  // I keep quantities and IDs strict so they do not silently turn into weird floats.
   const n = Number(v);
   if ( !Number.isFinite(n) || !Number.isInteger(n) || n <= 0 ) {
     throw badRequest(`${fieldName} must be a positive integer`);
@@ -68,6 +75,7 @@ function centsToAmount(cents) {
 
 student1Router.post("/student1/sql/place_order", async function(req, res, next) {
   try {
+    // I read and validate the request body before I touch the DB.
     let customerEmail;
     
     if ( req.body?.customerEmail ) {
@@ -106,6 +114,7 @@ student1Router.post("/student1/sql/place_order", async function(req, res, next) 
     }
 
     const order = await withTx(async function(conn) {
+      // I do everything in one transaction so an order never ends up half-written.
       const customers = await conn.query(
         `
         SELECT c.customer_id AS customerId, p.name AS customerName, p.email AS customerEmail
@@ -146,6 +155,7 @@ student1Router.post("/student1/sql/place_order", async function(req, res, next) 
 
 
       for ( let idx = 0; idx < items.length; idx++ ) {
+        // For each item, I resolve the menu item, compute the line total, and insert the row.
         let it;
         
         if ( items[idx] ) {
@@ -255,6 +265,7 @@ student1Router.post("/student1/sql/place_order", async function(req, res, next) 
       }
 
       const totalAmount = centsToAmount(totalCents);
+      // I update the order total after inserting items so it matches the final computed sum.
       await conn.query("UPDATE `order` SET total_amount = ? WHERE order_id = ?", [totalAmount, orderId]);
 
       return {
@@ -279,6 +290,7 @@ student1Router.post("/student1/sql/place_order", async function(req, res, next) 
 
 student1Router.post("/student1/sql/pay", async function(req, res, next) {
   try {
+    // I validate the request and then either insert or update the payment record.
     let orderId;
     
     if ( req.body?.orderId ) {
@@ -305,6 +317,7 @@ student1Router.post("/student1/sql/pay", async function(req, res, next) {
     }
 
     const payment = await withTx(async function(conn) {
+      // I keep the payment write + status update in one transaction.
       const orders = await conn.query(
         `
         SELECT order_id AS orderId, status, total_amount AS totalAmount
@@ -383,6 +396,7 @@ student1Router.post("/student1/sql/pay", async function(req, res, next) {
 
 student1Router.get("/student1/sql/report", async function(req, res, next) {
   try {
+    // I build the report filters (restaurant required, from/to optional) and run one query.
     let restaurantName;
     
     if ( req.query.restaurantName ) {
@@ -454,6 +468,7 @@ student1Router.get("/student1/sql/report", async function(req, res, next) {
 
 student1Router.post("/student1/mongo/place_order", async function(req, res, next) {
   try {
+    // I validate inputs, normalize items, then insert one order document into Mongo.
     let customerEmail;
     
     if ( req.body?.customerEmail ) {
@@ -505,6 +520,7 @@ student1Router.post("/student1/mongo/place_order", async function(req, res, next
 
     let totalCents = 0;
     const normalizedItems = items.map(function(it, idx) {
+      // I normalize each item and compute the running total in cents.
       let name;
       
       if ( it?.name != null && String(it.name).trim() !== "" ) {
@@ -630,6 +646,7 @@ student1Router.post("/student1/mongo/place_order", async function(req, res, next
 
 student1Router.post("/student1/mongo/pay", async function(req, res, next) {
   try {
+    // I update payment and status atomically with a pipeline update.
     let orderId;
     
     if ( req.body?.orderId ) {
@@ -695,6 +712,7 @@ student1Router.post("/student1/mongo/pay", async function(req, res, next) {
 
 student1Router.get("/student1/mongo/report", async function(req, res, next) {
   try {
+    // I build a Mongo match object and return a projected report view.
     let restaurantName;
     
     if ( req.query.restaurantName ) {
@@ -764,6 +782,7 @@ student1Router.get("/student1/mongo/report", async function(req, res, next) {
 
 student1Router.get("/student1/mongo/orders", async function(req, res, next) {
   try {
+    // I query orders from Mongo, then map them into the same shape as the SQL endpoint.
     let customerEmail;
     
     if ( req.query.customerEmail ) {
