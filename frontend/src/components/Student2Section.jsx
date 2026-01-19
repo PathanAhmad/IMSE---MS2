@@ -130,10 +130,12 @@ function Student2Section({ mode, actingRiderEmail }) {
     
     try {
       const endpoint = `/student2/${mode}/assign_delivery`
+      // Available orders can only be accepted (assigned). Status updates happen in Active Deliveries.
+      const nextDeliveryStatus = view === 'available' ? 'assigned' : deliveryStatus
       const payload = {
         riderEmail: actingRiderEmail,
         orderId: selectedOrder.orderId,
-        deliveryStatus: deliveryStatus
+        deliveryStatus: nextDeliveryStatus
       }
       
       const response = await api.post(endpoint, payload)
@@ -244,6 +246,9 @@ function Student2Section({ mode, actingRiderEmail }) {
                 // Sync deliveryStatus with the selected order's current status (Bug 1 fix)
                 if ( view === 'active' && order.deliveryStatus ) {
                   setDeliveryStatus(order.deliveryStatus)
+                } else if ( view === 'available' ) {
+                  // Available orders are only accepted (assigned)
+                  setDeliveryStatus('assigned')
                 }
               }}
             >
@@ -302,17 +307,10 @@ function Student2Section({ mode, actingRiderEmail }) {
                   </dl>
 
                   <div className="mb-3">
-                    <label className="form-label">Set Initial Status</label>
-                    <select
-                      className="form-select"
-                      value={deliveryStatus}
-                      onChange={function(e) {
-                        setDeliveryStatus(e.target.value)
-                      }}
-                    >
-                      <option value="assigned">Assigned (just accepted)</option>
-                      <option value="picked_up">Picked Up (already collected)</option>
-                    </select>
+                    <label className="form-label">Initial Status</label>
+                    <div className="form-control-plaintext">
+                      <span className="badge bg-warning text-dark">assigned</span>
+                    </div>
                   </div>
 
                   <button
