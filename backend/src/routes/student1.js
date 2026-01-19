@@ -229,12 +229,16 @@ student1Router.post("/student1/sql/place_order", async function(req, res, next) 
             SELECT menu_item_id AS menuItemId, name AS menuItemName, price AS unitPrice
             FROM menu_item
             WHERE restaurant_id = ? AND name = ?
-            LIMIT 1
+            ORDER BY menu_item_id ASC
+            LIMIT 2
             `,
             [restaurantId, menuItemName]
           );
           if ( !rows.length ) {
             throw notFound(`menu item not found for items[${idx}]`);
+          }
+          if ( rows.length > 1 ) {
+            throw badRequest(`menu item name is not unique for items[${idx}] (use menuItemId instead)`);
           }
           menuRow = rows[0];
         }
@@ -454,12 +458,16 @@ student1Router.post("/student1/sql/place_and_pay", async function(req, res, next
             SELECT menu_item_id AS menuItemId, name AS menuItemName, price AS unitPrice
             FROM menu_item
             WHERE restaurant_id = ? AND name = ?
-            LIMIT 1
+            ORDER BY menu_item_id ASC
+            LIMIT 2
             `,
             [restaurantId, menuItemName]
           );
           if ( !rows.length ) {
             throw notFound(`menu item not found for items[${idx}]`);
+          }
+          if ( rows.length > 1 ) {
+            throw badRequest(`menu item name is not unique for items[${idx}] (use menuItemId instead)`);
           }
           menuRow = rows[0];
         }

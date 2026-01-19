@@ -137,21 +137,22 @@ async function importResetMariaDb() {
     const payMethods = ["card", "cash", "paypal"];
     const categories = ["vegan", "spicy", "dessert", "drink", "starter", "main"];
 
-    // Realistic menu item names for Vienna restaurants
+    // Realistic menu item names for Vienna restaurants.
+    // NOTE: We keep this list de-duplicated to avoid ambiguous name-based menu lookups.
     const menuItemNames = [
       // Austrian traditional dishes
       "Wiener Schnitzel", "Tafelspitz", "Gulasch", "Kaiserschmarrn", "Apfelstrudel",
       "Sachertorte", "Leberkäs", "Knödel", "Spätzle", "Bratwurst",
       "Käsespätzle", "Schweinsbraten", "Schnitzel Cordon Bleu", "Backhendl", "Zwiebelrostbraten",
       // Cafe items
-      "Cappuccino", "Melange", "Einspänner", "Wiener Eiskaffee", "Sachertorte",
+      "Cappuccino", "Melange", "Einspänner", "Wiener Eiskaffee",
       "Topfenstrudel", "Linzer Torte", "Mozartkugeln", "Marillenknödel", "Palatschinken",
       // International dishes
       "Margherita Pizza", "Carbonara", "Bolognese", "Caesar Salad", "Burger Classic",
       "Chicken Curry", "Pad Thai", "Sushi Platter", "Fish & Chips", "Tacos",
       "Risotto ai Funghi", "Penne Arrabbiata", "Greek Salad", "Chicken Wings", "Nachos",
       // Starters & Sides
-      "Tomato Soup", "Onion Soup", "Caesar Salad", "Caprese Salad", "Bruschetta",
+      "Tomato Soup", "Onion Soup", "Caprese Salad", "Bruschetta",
       "Garlic Bread", "French Fries", "Onion Rings", "Mozzarella Sticks", "Soup of the Day",
       // Desserts
       "Chocolate Cake", "Cheesecake", "Tiramisu", "Ice Cream Sundae", "Crème Brûlée",
@@ -196,6 +197,9 @@ async function importResetMariaDb() {
     const itemsByRestaurantId = new Map(restaurantIds.map(function(rid) {
       return [rid, []];
     }));
+    const usedMenuItemNamesByRestaurantId = new Map(restaurantIds.map(function(rid) {
+      return [rid, new Set()];
+    }));
 
     for ( let i = 0; i < menuItemTotal; i++ ) {
       // First N items cover all restaurants; remaining items are randomized.
@@ -207,7 +211,35 @@ async function importResetMariaDb() {
       else {
         restaurantId = pick(rng, restaurantIds);
       }
-      const name = pick(rng, menuItemNames);
+      // Make menu item names unique per restaurant so name-based lookups are never ambiguous.
+      const usedNames = usedMenuItemNamesByRestaurantId.get(restaurantId);
+      let name = null;
+
+      for ( let attempt = 0; attempt < 200; attempt++ ) {
+        const candidate = pick(rng, menuItemNames);
+        if ( !usedNames.has(candidate) ) {
+          name = candidate;
+          break;
+        }
+      }
+      if ( !name ) {
+        for ( const candidate of menuItemNames ) {
+          if ( !usedNames.has(candidate) ) {
+            name = candidate;
+            break;
+          }
+        }
+      }
+      if ( !name ) {
+        // Extremely unlikely given our pool size, but keep correctness if the pool is exhausted.
+        const base = pick(rng, menuItemNames);
+        let suffix = 2;
+        while ( usedNames.has(`${base} (${suffix})`) ) {
+          suffix++;
+        }
+        name = `${base} (${suffix})`;
+      }
+      usedNames.add(name);
       const description = `Delicious ${name.toLowerCase()}`;
       const price = (randInt(rng, 500, 2500) / 100).toFixed(2);
       const r = await conn.query(
