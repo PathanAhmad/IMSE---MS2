@@ -759,8 +759,8 @@ function Student1Section({ mode, actingCustomerEmail }) {
   const renderAnalyticsView = function() {
     return (
     <>
-      <h3 className="h5 mb-3">Order Analytics Report</h3>
-      <p className="text-muted">View order history and payment data by restaurant.</p>
+      <h3 className="h5 mb-3">Restaurant Analytics Report</h3>
+      <p className="text-muted">View aggregated order metrics and trends by restaurant.</p>
       
       <form onSubmit={handleReport}>
         <div className="row g-3">
@@ -816,48 +816,192 @@ function Student1Section({ mode, actingCustomerEmail }) {
       </form>
 
       {reportResult && (
-        <div className={`alert mt-3 ${reportResult.success ? 'alert-success' : 'alert-danger'}`}>
+        <div className="mt-4">
           {reportResult.success ? (
             <>
-              <h5 className="alert-heading">Report Generated</h5>
-              {reportResult.data.rows && reportResult.data.rows.length > 0 ? (
-                <div className="table-responsive mt-3">
-                  <table className="table table-striped table-bordered table-hover table-sm">
-                    <thead className="table-dark">
-                      <tr>
-                        {Object.keys(reportResult.data.rows[0]).map(function(key) {
-                          return (
-                            <th key={key}>{key}</th>
-                            )
-                          })}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {reportResult.data.rows.map(function(row, idx) {
-                        return (
-                          <tr key={idx}>
-                            {Object.values(row).map(function(val, i) {
-                              return (
-                                <td key={i}>{val != null ? JSON.stringify(val) : '-'}</td>
-                                )
-                              })}
-                          </tr>
-                          )
-                        })}
-                    </tbody>
-                  </table>
-                </div>
-              ) 
-              : (
-                <p className="mt-2 mb-0">No data found for the selected criteria.</p>
+              {reportResult.data.summary ? (
+                <>
+                  <div className="card mb-4">
+                    <div className="card-header bg-primary text-white">
+                      <h5 className="mb-0">Summary Metrics</h5>
+                    </div>
+                    <div className="card-body">
+                      <div className="row text-center">
+                        <div className="col-md-2">
+                          <h3 className="text-primary">{reportResult.data.summary.totalOrders}</h3>
+                          <small className="text-muted">Total Orders</small>
+                        </div>
+                        <div className="col-md-2">
+                          <h3 className="text-success">€{reportResult.data.summary.totalRevenue}</h3>
+                          <small className="text-muted">Total Revenue</small>
+                        </div>
+                        <div className="col-md-2">
+                          <h3 className="text-info">€{reportResult.data.summary.avgOrderValue}</h3>
+                          <small className="text-muted">Avg Order Value</small>
+                        </div>
+                        <div className="col-md-2">
+                          <h3 className="text-success">{reportResult.data.summary.paidOrders}</h3>
+                          <small className="text-muted">Paid Orders</small>
+                        </div>
+                        <div className="col-md-2">
+                          <h3 className="text-warning">{reportResult.data.summary.unpaidOrders}</h3>
+                          <small className="text-muted">Unpaid Orders</small>
+                        </div>
+                        <div className="col-md-2">
+                          <h3 className="text-primary">{reportResult.data.summary.paymentRate}%</h3>
+                          <small className="text-muted">Payment Rate</small>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="row">
+                    <div className="col-md-6 mb-3">
+                      <div className="card">
+                        <div className="card-header">
+                          <h6 className="mb-0">Orders by Status</h6>
+                        </div>
+                        <div className="card-body">
+                          {reportResult.data.breakdown.byStatus.length > 0 ? (
+                            <table className="table table-sm mb-0">
+                              <thead>
+                                <tr>
+                                  <th>Status</th>
+                                  <th className="text-end">Count</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {reportResult.data.breakdown.byStatus.map(function(item, idx) {
+                                  return (
+                                    <tr key={idx}>
+                                      <td><span className="badge bg-secondary">{item.status}</span></td>
+                                      <td className="text-end">{item.count}</td>
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                          ) : (
+                            <p className="text-muted mb-0">No data</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="col-md-6 mb-3">
+                      <div className="card">
+                        <div className="card-header">
+                          <h6 className="mb-0">Payment Methods</h6>
+                        </div>
+                        <div className="card-body">
+                          {reportResult.data.breakdown.byPaymentMethod.length > 0 ? (
+                            <table className="table table-sm mb-0">
+                              <thead>
+                                <tr>
+                                  <th>Method</th>
+                                  <th className="text-end">Count</th>
+                                  <th className="text-end">Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {reportResult.data.breakdown.byPaymentMethod.map(function(item, idx) {
+                                  return (
+                                    <tr key={idx}>
+                                      <td>{item.method}</td>
+                                      <td className="text-end">{item.count}</td>
+                                      <td className="text-end">€{Number(item.total).toFixed(2)}</td>
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                          ) : (
+                            <p className="text-muted mb-0">No data</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="col-md-6 mb-3">
+                      <div className="card">
+                        <div className="card-header">
+                          <h6 className="mb-0">Top 5 Menu Items</h6>
+                        </div>
+                        <div className="card-body">
+                          {reportResult.data.breakdown.topItems.length > 0 ? (
+                            <table className="table table-sm mb-0">
+                              <thead>
+                                <tr>
+                                  <th>Item</th>
+                                  <th className="text-end">Quantity</th>
+                                  <th className="text-end">Revenue</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {reportResult.data.breakdown.topItems.map(function(item, idx) {
+                                  return (
+                                    <tr key={idx}>
+                                      <td>{item.itemName}</td>
+                                      <td className="text-end">{item.totalQuantity}</td>
+                                      <td className="text-end">€{Number(item.totalRevenue).toFixed(2)}</td>
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                          ) : (
+                            <p className="text-muted mb-0">No data</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="col-md-6 mb-3">
+                      <div className="card">
+                        <div className="card-header">
+                          <h6 className="mb-0">Daily Trend (Last 30 Days)</h6>
+                        </div>
+                        <div className="card-body">
+                          {reportResult.data.breakdown.byDay.length > 0 ? (
+                            <div className="table-responsive" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                              <table className="table table-sm mb-0">
+                                <thead>
+                                  <tr>
+                                    <th>Date</th>
+                                    <th className="text-end">Orders</th>
+                                    <th className="text-end">Revenue</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {reportResult.data.breakdown.byDay.map(function(item, idx) {
+                                    return (
+                                      <tr key={idx}>
+                                        <td>{item.date}</td>
+                                        <td className="text-end">{item.orders}</td>
+                                        <td className="text-end">€{Number(item.revenue).toFixed(2)}</td>
+                                      </tr>
+                                    )
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <p className="text-muted mb-0">No data</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="alert alert-info">No data found for the selected criteria.</div>
               )}
             </>
-          ) 
-          : (
-            <>
+          ) : (
+            <div className="alert alert-danger">
               <div>Error: {reportResult.error.error}</div>
               {reportResult.error.stack && <pre className="mt-2 mb-0 small">{reportResult.error.stack}</pre>}
-            </>
+            </div>
           )}
         </div>
       )}

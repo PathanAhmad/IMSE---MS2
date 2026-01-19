@@ -150,7 +150,7 @@ student2Router.post("/student2/sql/assign_delivery", async function(req, res, ne
 
 student2Router.get("/student2/sql/report", async function(req, res, next) {
   try {
-    // I build optional filters (date range + status) and run one SQL report query.
+    // I build analytics with KPIs and breakdowns for the rider.
     let riderEmail;
     
     if ( req.query.riderEmail ) {
@@ -200,7 +200,6 @@ student2Router.get("/student2/sql/report", async function(req, res, next) {
     const params = [riderEmail];
     let whereExtra = "";
 
-
     if ( from ) {
       whereExtra += " AND o.created_at >= ? ";
       params.push(from);
@@ -216,20 +215,68 @@ student2Router.get("/student2/sql/report", async function(req, res, next) {
       params.push(deliveryStatus);
     }
 
-    const rows = await withConn(function(conn) {
-      return conn.query(
+    const result = await withConn(async function(conn) {
+      // I compute summary KPIs first.
+      const summaryRows = await conn.query(
         `
         SELECT
-          p.email AS riderEmail,
-          p.name AS riderName,
-          r.vehicle_type AS vehicleType,
-          d.delivery_id AS deliveryId,
-          d.delivery_status AS deliveryStatus,
-          d.assigned_at AS assignedAt,
-          o.order_id AS orderId,
-          o.created_at AS orderCreatedAt,
-          o.total_amount AS totalAmount,
-          rest.name AS restaurantName
+          COUNT(*) AS totalDeliveries,
+          COALESCE(SUM(o.total_amount), 0) AS totalRevenue,
+          COALESCE(AVG(o.total_amount), 0) AS avgOrderValue,
+          SUM(CASE WHEN d.delivery_status = 'assigned' THEN 1 ELSE 0 END) AS assigned,
+          SUM(CASE WHEN d.delivery_status = 'picked_up' THEN 1 ELSE 0 END) AS pickedUp,
+          SUM(CASE WHEN d.delivery_status = 'delivered' THEN 1 ELSE 0 END) AS delivered
+        FROM rider r
+        JOIN person p ON p.person_id = r.rider_id
+        JOIN delivery d ON d.rider_id = r.rider_id
+        JOIN \`order\` o ON o.order_id = d.order_id
+        WHERE p.email = ?
+        ${whereExtra}
+        `,
+        params
+      );
+
+      const summary = summaryRows[0];
+      const totalDeliveries = Number(summary.totalDeliveries);
+      const delivered = Number(summary.delivered);
+
+      const summaryData = {
+        totalDeliveries,
+        totalRevenue: Number(summary.totalRevenue).toFixed(2),
+        avgOrderValue: Number(summary.avgOrderValue).toFixed(2),
+        byStatus: {
+          assigned: Number(summary.assigned),
+          picked_up: Number(summary.pickedUp),
+          delivered
+        },
+        completionRate: totalDeliveries > 0 ? ((delivered / totalDeliveries) * 100).toFixed(1) : 0
+      };
+
+      // I compute deliveries per day.
+      const byDay = await conn.query(
+        `
+        SELECT
+          DATE(o.created_at) AS date,
+          COUNT(*) AS deliveries
+        FROM rider r
+        JOIN person p ON p.person_id = r.rider_id
+        JOIN delivery d ON d.rider_id = r.rider_id
+        JOIN \`order\` o ON o.order_id = d.order_id
+        WHERE p.email = ?
+        ${whereExtra}
+        GROUP BY DATE(o.created_at)
+        ORDER BY date DESC
+        LIMIT 30
+        `,
+        params
+      );
+
+      // I compute top restaurants by delivery count.
+      const byRestaurant = await conn.query(
+        `
+        SELECT
+          rest.name AS restaurant,
+          COUNT(*) AS count
         FROM rider r
         JOIN person p ON p.person_id = r.rider_id
         JOIN delivery d ON d.rider_id = r.rider_id
@@ -237,13 +284,23 @@ student2Router.get("/student2/sql/report", async function(req, res, next) {
         JOIN restaurant rest ON rest.restaurant_id = o.restaurant_id
         WHERE p.email = ?
         ${whereExtra}
-        ORDER BY d.assigned_at DESC
+        GROUP BY rest.restaurant_id, rest.name
+        ORDER BY count DESC
+        LIMIT 5
         `,
         params
       );
+
+      return {
+        summary: summaryData,
+        breakdown: {
+          byDay,
+          byRestaurant
+        }
+      };
     });
 
-    res.json({ ok: true, rows });
+    res.json({ ok: true, ...result });
   } 
   catch (e) {
     next(e);
@@ -361,7 +418,7 @@ student2Router.post("/student2/mongo/assign_delivery", async function(req, res, 
 
 student2Router.get("/student2/mongo/report", async function(req, res, next) {
   try {
-    // I build a Mongo match object and return a projected report view.
+    // I build analytics with KPIs and breakdowns for the rider from Mongo.
     let riderEmail;
     
     if ( req.query.riderEmail ) {
@@ -414,7 +471,6 @@ student2Router.get("/student2/mongo/report", async function(req, res, next) {
       "delivery.rider.email": riderEmail
     };
 
-
     if ( deliveryStatus ) {
       match["delivery.deliveryStatus"] = deliveryStatus;
     }
@@ -431,30 +487,88 @@ student2Router.get("/student2/mongo/report", async function(req, res, next) {
       }
     }
 
-    const rows = await db
-      .collection("orders")
-      .aggregate([
-        { $match: match },
-        {
-          $project: {
-            _id: 0,
-            riderEmail: "$delivery.rider.email",
-            riderName: "$delivery.rider.name",
-            vehicleType: "$delivery.rider.vehicleType",
-            deliveryId: "$delivery.deliveryId",
-            deliveryStatus: "$delivery.deliveryStatus",
-            assignedAt: "$delivery.assignedAt",
-            orderId: "$orderId",
-            orderCreatedAt: "$createdAt",
-            totalAmount: "$totalAmount",
-            restaurantName: "$restaurant.name"
+    // I compute summary KPIs.
+    const summaryResult = await db.collection("orders").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          totalDeliveries: { $sum: 1 },
+          totalRevenue: { $sum: "$totalAmount" },
+          avgOrderValue: { $avg: "$totalAmount" },
+          assigned: {
+            $sum: { $cond: [{ $eq: ["$delivery.deliveryStatus", "assigned"] }, 1, 0] }
+          },
+          pickedUp: {
+            $sum: { $cond: [{ $eq: ["$delivery.deliveryStatus", "picked_up"] }, 1, 0] }
+          },
+          delivered: {
+            $sum: { $cond: [{ $eq: ["$delivery.deliveryStatus", "delivered"] }, 1, 0] }
           }
-        },
-        { $sort: { assignedAt: -1 } }
-      ])
-      .toArray();
+        }
+      }
+    ]).toArray();
 
-    res.json({ ok: true, rows });
+    const summaryRaw = summaryResult[0] || {
+      totalDeliveries: 0,
+      totalRevenue: 0,
+      avgOrderValue: 0,
+      assigned: 0,
+      pickedUp: 0,
+      delivered: 0
+    };
+
+    const totalDeliveries = Number(summaryRaw.totalDeliveries);
+    const delivered = Number(summaryRaw.delivered);
+
+    const summary = {
+      totalDeliveries,
+      totalRevenue: Number(summaryRaw.totalRevenue).toFixed(2),
+      avgOrderValue: Number(summaryRaw.avgOrderValue).toFixed(2),
+      byStatus: {
+        assigned: Number(summaryRaw.assigned),
+        picked_up: Number(summaryRaw.pickedUp),
+        delivered
+      },
+      completionRate: totalDeliveries > 0 ? ((delivered / totalDeliveries) * 100).toFixed(1) : 0
+    };
+
+    // I compute deliveries per day.
+    const byDay = await db.collection("orders").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+          deliveries: { $sum: 1 }
+        }
+      },
+      { $project: { _id: 0, date: "$_id", deliveries: 1 } },
+      { $sort: { date: -1 } },
+      { $limit: 30 }
+    ]).toArray();
+
+    // I compute top restaurants by delivery count.
+    const byRestaurant = await db.collection("orders").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: "$restaurant.name",
+          count: { $sum: 1 }
+        }
+      },
+      { $project: { _id: 0, restaurant: "$_id", count: 1 } },
+      { $sort: { count: -1 } },
+      { $limit: 5 }
+    ]).toArray();
+
+    res.json({
+      ok: true,
+      summary,
+      breakdown: {
+        byDay,
+        byRestaurant
+      }
+    });
   } 
   catch (e) {
     next(e);

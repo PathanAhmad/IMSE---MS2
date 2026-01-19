@@ -76,7 +76,7 @@ docker compose down -v
 
 ## AI tools (responsible use)
 
-We used AI tools to brainstorm UI/UX ideas and to improve wording in documentation.
+We used AI tools to brainstorm UI/UX ideas, to improve wording in documentation, and to generate the fake data.
 We did **not** copy-paste AI-generated code, and we did not use AI to “solve” the assignment for us.
 All code and final decisions were made and verified by us.
 

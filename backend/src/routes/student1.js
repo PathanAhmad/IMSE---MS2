@@ -396,7 +396,7 @@ student1Router.post("/student1/sql/pay", async function(req, res, next) {
 
 student1Router.get("/student1/sql/report", async function(req, res, next) {
   try {
-    // I build the report filters (restaurant required, from/to optional) and run one query.
+    // I build analytics with KPIs and breakdowns for the restaurant.
     let restaurantName;
     
     if ( req.query.restaurantName ) {
@@ -425,34 +425,122 @@ student1Router.get("/student1/sql/report", async function(req, res, next) {
       params.push(to);
     }
 
-    const rows = await withConn(function(conn) {
-      return conn.query(
+    const result = await withConn(async function(conn) {
+      // I compute summary KPIs first.
+      const summaryRows = await conn.query(
         `
         SELECT
-          r.name AS restaurantName,
-          o.order_id AS orderId,
-          o.created_at AS orderCreatedAt,
-          o.status AS status,
-          o.total_amount AS totalAmount,
-          p.email AS customerEmail,
-          p.name AS customerName,
-          pay.amount AS paymentAmount,
-          pay.payment_method AS paymentMethod,
-          pay.paid_at AS paidAt
+          COUNT(*) AS totalOrders,
+          COALESCE(SUM(o.total_amount), 0) AS totalRevenue,
+          COALESCE(AVG(o.total_amount), 0) AS avgOrderValue,
+          SUM(CASE WHEN pay.paid_at IS NOT NULL THEN 1 ELSE 0 END) AS paidOrders,
+          SUM(CASE WHEN pay.paid_at IS NULL THEN 1 ELSE 0 END) AS unpaidOrders
         FROM restaurant r
         JOIN \`order\` o ON o.restaurant_id = r.restaurant_id
-        JOIN customer c ON c.customer_id = o.customer_id
-        JOIN person p ON p.person_id = c.customer_id
         LEFT JOIN payment pay ON pay.order_id = o.order_id
         WHERE r.name = ?
         ${whereExtra}
-        ORDER BY o.created_at DESC
         `,
         params
       );
+
+      const summary = summaryRows[0];
+      const totalOrders = Number(summary.totalOrders);
+      const paidOrders = Number(summary.paidOrders);
+
+      const summaryData = {
+        totalOrders,
+        totalRevenue: Number(summary.totalRevenue).toFixed(2),
+        avgOrderValue: Number(summary.avgOrderValue).toFixed(2),
+        paidOrders,
+        unpaidOrders: Number(summary.unpaidOrders),
+        paymentRate: totalOrders > 0 ? ((paidOrders / totalOrders) * 100).toFixed(1) : 0
+      };
+
+      // I compute orders by status.
+      const byStatus = await conn.query(
+        `
+        SELECT
+          o.status,
+          COUNT(*) AS count
+        FROM restaurant r
+        JOIN \`order\` o ON o.restaurant_id = r.restaurant_id
+        WHERE r.name = ?
+        ${whereExtra}
+        GROUP BY o.status
+        ORDER BY count DESC
+        `,
+        params
+      );
+
+      // I compute orders per day for trend.
+      const byDay = await conn.query(
+        `
+        SELECT
+          DATE(o.created_at) AS date,
+          COUNT(*) AS orders,
+          COALESCE(SUM(o.total_amount), 0) AS revenue
+        FROM restaurant r
+        JOIN \`order\` o ON o.restaurant_id = r.restaurant_id
+        WHERE r.name = ?
+        ${whereExtra}
+        GROUP BY DATE(o.created_at)
+        ORDER BY date DESC
+        LIMIT 30
+        `,
+        params
+      );
+
+      // I compute payment method breakdown.
+      const byPaymentMethod = await conn.query(
+        `
+        SELECT
+          pay.payment_method AS method,
+          COUNT(*) AS count,
+          COALESCE(SUM(pay.amount), 0) AS total
+        FROM restaurant r
+        JOIN \`order\` o ON o.restaurant_id = r.restaurant_id
+        JOIN payment pay ON pay.order_id = o.order_id
+        WHERE r.name = ? AND pay.paid_at IS NOT NULL
+        ${whereExtra}
+        GROUP BY pay.payment_method
+        ORDER BY total DESC
+        `,
+        params
+      );
+
+      // I compute top 5 menu items sold.
+      const topItems = await conn.query(
+        `
+        SELECT
+          m.name AS itemName,
+          SUM(oi.quantity) AS totalQuantity,
+          COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS totalRevenue
+        FROM restaurant r
+        JOIN \`order\` o ON o.restaurant_id = r.restaurant_id
+        JOIN order_item oi ON oi.order_id = o.order_id
+        JOIN menu_item m ON m.menu_item_id = oi.menu_item_id
+        WHERE r.name = ?
+        ${whereExtra}
+        GROUP BY m.menu_item_id, m.name
+        ORDER BY totalQuantity DESC
+        LIMIT 5
+        `,
+        params
+      );
+
+      return {
+        summary: summaryData,
+        breakdown: {
+          byStatus,
+          byDay,
+          byPaymentMethod,
+          topItems
+        }
+      };
     });
 
-    res.json({ ok: true, rows });
+    res.json({ ok: true, ...result });
   } 
   catch (e) {
     next(e);
@@ -712,7 +800,7 @@ student1Router.post("/student1/mongo/pay", async function(req, res, next) {
 
 student1Router.get("/student1/mongo/report", async function(req, res, next) {
   try {
-    // I build a Mongo match object and return a projected report view.
+    // I build analytics with KPIs and breakdowns for the restaurant from Mongo.
     let restaurantName;
     
     if ( req.query.restaurantName ) {
@@ -744,30 +832,115 @@ student1Router.get("/student1/mongo/report", async function(req, res, next) {
       }
     }
 
-    const rows = await db
-      .collection("orders")
-      .aggregate([
-        { $match: match },
-        {
-          $project: {
-            _id: 0,
-            restaurantName: "$restaurant.name",
-            orderId: "$orderId",
-            orderCreatedAt: "$createdAt",
-            status: "$status",
-            totalAmount: "$totalAmount",
-            customerEmail: "$customer.email",
-            customerName: "$customer.name",
-            paymentAmount: "$payment.amount",
-            paymentMethod: "$payment.method",
-            paidAt: "$payment.paidAt"
+    // I compute summary KPIs.
+    const summaryResult = await db.collection("orders").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          totalOrders: { $sum: 1 },
+          totalRevenue: { $sum: "$totalAmount" },
+          avgOrderValue: { $avg: "$totalAmount" },
+          paidOrders: {
+            $sum: { $cond: [{ $ne: ["$payment.paidAt", null] }, 1, 0] }
+          },
+          unpaidOrders: {
+            $sum: { $cond: [{ $eq: ["$payment.paidAt", null] }, 1, 0] }
           }
-        },
-        { $sort: { orderCreatedAt: -1 } }
-      ])
-      .toArray();
+        }
+      }
+    ]).toArray();
 
-    res.json({ ok: true, rows });
+    const summaryRaw = summaryResult[0] || {
+      totalOrders: 0,
+      totalRevenue: 0,
+      avgOrderValue: 0,
+      paidOrders: 0,
+      unpaidOrders: 0
+    };
+
+    const totalOrders = Number(summaryRaw.totalOrders);
+    const paidOrders = Number(summaryRaw.paidOrders);
+
+    const summary = {
+      totalOrders,
+      totalRevenue: Number(summaryRaw.totalRevenue).toFixed(2),
+      avgOrderValue: Number(summaryRaw.avgOrderValue).toFixed(2),
+      paidOrders,
+      unpaidOrders: Number(summaryRaw.unpaidOrders),
+      paymentRate: totalOrders > 0 ? ((paidOrders / totalOrders) * 100).toFixed(1) : 0
+    };
+
+    // I compute orders by status.
+    const byStatus = await db.collection("orders").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 }
+        }
+      },
+      { $project: { _id: 0, status: "$_id", count: 1 } },
+      { $sort: { count: -1 } }
+    ]).toArray();
+
+    // I compute orders per day.
+    const byDay = await db.collection("orders").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+          orders: { $sum: 1 },
+          revenue: { $sum: "$totalAmount" }
+        }
+      },
+      { $project: { _id: 0, date: "$_id", orders: 1, revenue: 1 } },
+      { $sort: { date: -1 } },
+      { $limit: 30 }
+    ]).toArray();
+
+    // I compute payment method breakdown.
+    const byPaymentMethod = await db.collection("orders").aggregate([
+      { $match: { ...match, "payment.paidAt": { $ne: null } } },
+      {
+        $group: {
+          _id: "$payment.method",
+          count: { $sum: 1 },
+          total: { $sum: "$payment.amount" }
+        }
+      },
+      { $project: { _id: 0, method: "$_id", count: 1, total: 1 } },
+      { $sort: { total: -1 } }
+    ]).toArray();
+
+    // I compute top 5 menu items sold.
+    const topItems = await db.collection("orders").aggregate([
+      { $match: match },
+      { $unwind: "$orderItems" },
+      {
+        $group: {
+          _id: "$orderItems.name",
+          totalQuantity: { $sum: "$orderItems.quantity" },
+          totalRevenue: {
+            $sum: { $multiply: ["$orderItems.quantity", "$orderItems.unitPrice"] }
+          }
+        }
+      },
+      { $project: { _id: 0, itemName: "$_id", totalQuantity: 1, totalRevenue: 1 } },
+      { $sort: { totalQuantity: -1 } },
+      { $limit: 5 }
+    ]).toArray();
+
+    res.json({
+      ok: true,
+      summary,
+      breakdown: {
+        byStatus,
+        byDay,
+        byPaymentMethod,
+        topItems
+      }
+    });
   } 
   catch (e) {
     next(e);
