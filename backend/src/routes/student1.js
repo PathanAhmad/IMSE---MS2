@@ -286,6 +286,254 @@ student1Router.post("/student1/sql/place_order", async function(req, res, next) 
   }
 });
 
+// Place + Pay in one step (atomic)
+// This prevents creating unpaid orders when the user cancels the payment modal.
+student1Router.post("/student1/sql/place_and_pay", async function(req, res, next) {
+  try {
+    // I read and validate the request body before I touch the DB.
+    let customerEmail;
+    
+    if ( req.body?.customerEmail ) {
+      customerEmail = String(req.body.customerEmail);
+    } 
+    else {
+      customerEmail = "";
+    }
+    
+    let restaurantName;
+    
+    if ( req.body?.restaurantName ) {
+      restaurantName = String(req.body.restaurantName);
+    } 
+    else {
+      restaurantName = "";
+    }
+    
+    let paymentMethod;
+    
+    if ( req.body?.paymentMethod ) {
+      paymentMethod = String(req.body.paymentMethod);
+    } 
+    else {
+      paymentMethod = "";
+    }
+    
+    let items;
+    
+    if ( Array.isArray(req.body?.items) ) {
+      items = req.body.items;
+    } 
+    else {
+      items = null;
+    }
+
+    if ( !customerEmail ) {
+      throw badRequest("customerEmail is required");
+    }
+    if ( !restaurantName ) {
+      throw badRequest("restaurantName is required");
+    }
+    if ( !paymentMethod ) {
+      throw badRequest("paymentMethod is required");
+    }
+    if ( !items || !items.length ) {
+      throw badRequest("items must be a non-empty array");
+    }
+
+    const result = await withTx(async function(conn) {
+      // I do everything in one transaction: create order + items + payment + status update.
+      const customers = await conn.query(
+        `
+        SELECT c.customer_id AS customerId, p.name AS customerName, p.email AS customerEmail
+        FROM customer c
+        JOIN person p ON p.person_id = c.customer_id
+        WHERE p.email = ?
+        LIMIT 1
+        `,
+        [customerEmail]
+      );
+      if ( !customers.length ) {
+        throw notFound("customer not found");
+      }
+      const customerId = Number(customers[0].customerId);
+      const customerName = customers[0].customerName;
+
+      const restaurants = await conn.query(
+        `SELECT restaurant_id AS restaurantId, name AS restaurantName, address AS restaurantAddress FROM restaurant WHERE name = ? LIMIT 1`,
+        [restaurantName]
+      );
+      if ( !restaurants.length ) {
+        throw notFound("restaurant not found");
+      }
+      const restaurantId = Number(restaurants[0].restaurantId);
+      const restaurantAddress = restaurants[0].restaurantAddress;
+
+      const now = new Date();
+
+      // I insert the order with total 0, then update it after order items are inserted.
+      const o = await conn.query(
+        "INSERT INTO `order` (customer_id, restaurant_id, created_at, status, total_amount) VALUES (?, ?, ?, ?, ?)",
+        [customerId, restaurantId, now, "created", 0]
+      );
+      const orderId = Number(o.insertId);
+
+      let totalCents = 0;
+      const insertedItems = [];
+
+      for ( let idx = 0; idx < items.length; idx++ ) {
+        let it;
+        
+        if ( items[idx] ) {
+          it = items[idx];
+        } 
+        else {
+          it = {};
+        }
+        const quantity = toPositiveInt(it.quantity, `items[${idx}].quantity`);
+
+        const menuItemIdRaw = it.menuItemId;
+        let menuItemNameRaw;
+        
+        if ( it.menuItemName != null ) {
+          menuItemNameRaw = it.menuItemName;
+        } 
+        else {
+          menuItemNameRaw = it.name; // allow either key
+        }
+        let menuItemId;
+        
+        if ( menuItemIdRaw != null && String(menuItemIdRaw).trim() !== "" ) {
+          menuItemId = Number(menuItemIdRaw);
+        } 
+        else {
+          menuItemId = null;
+        }
+        
+        let menuItemName;
+        
+        if ( menuItemNameRaw != null && String(menuItemNameRaw).trim() !== "" ) {
+          menuItemName = String(menuItemNameRaw);
+        } 
+        else {
+          menuItemName = null;
+        }
+
+        let menuItemIdForCheck;
+        
+        if ( menuItemId ) {
+          menuItemIdForCheck = menuItemId;
+        } 
+        else {
+          menuItemIdForCheck = NaN;
+        }
+        
+        if ( !Number.isFinite(menuItemIdForCheck) && !menuItemName ) {
+          throw badRequest(`items[${idx}] must include menuItemId or menuItemName`);
+        }
+
+        let menuRow;
+        
+        if ( Number.isFinite(menuItemId) ) {
+          const rows = await conn.query(
+            `
+            SELECT menu_item_id AS menuItemId, name AS menuItemName, price AS unitPrice
+            FROM menu_item
+            WHERE menu_item_id = ? AND restaurant_id = ?
+            LIMIT 1
+            `,
+            [menuItemId, restaurantId]
+          );
+          if ( !rows.length ) {
+            throw notFound(`menu item not found for items[${idx}]`);
+          }
+          menuRow = rows[0];
+        } 
+        else {
+          const rows = await conn.query(
+            `
+            SELECT menu_item_id AS menuItemId, name AS menuItemName, price AS unitPrice
+            FROM menu_item
+            WHERE restaurant_id = ? AND name = ?
+            LIMIT 1
+            `,
+            [restaurantId, menuItemName]
+          );
+          if ( !rows.length ) {
+            throw notFound(`menu item not found for items[${idx}]`);
+          }
+          menuRow = rows[0];
+        }
+
+        const resolvedMenuItemId = Number(menuRow.menuItemId);
+        const resolvedMenuItemName = menuRow.menuItemName;
+        const unitPrice = Number(menuRow.unitPrice);
+        if ( !Number.isFinite(unitPrice) || unitPrice < 0 ) {
+          throw new Error("invalid unit price in DB");
+        }
+
+        const lineCents = priceToCents(unitPrice, `items[${idx}].unitPrice`) * quantity;
+        totalCents += lineCents;
+
+        await conn.query("INSERT INTO order_item (order_id, menu_item_id, quantity, unit_price) VALUES (?, ?, ?, ?)", [
+          orderId,
+          resolvedMenuItemId,
+          quantity,
+          unitPrice
+        ]);
+
+        insertedItems.push({
+          menuItemId: resolvedMenuItemId,
+          name: resolvedMenuItemName,
+          quantity,
+          unitPrice: Number(unitPrice)
+        });
+      }
+
+      const totalAmount = centsToAmount(totalCents);
+      await conn.query("UPDATE `order` SET total_amount = ? WHERE order_id = ?", [totalAmount, orderId]);
+
+      // I create the payment and advance the order status in the same transaction.
+      await conn.query("INSERT INTO payment (order_id, amount, payment_method, paid_at) VALUES (?, ?, ?, ?)", [
+        orderId,
+        totalAmount,
+        paymentMethod,
+        now
+      ]);
+      await conn.query("UPDATE `order` SET status = IF(status = 'created', 'preparing', status) WHERE order_id = ?", [
+        orderId
+      ]);
+
+      const paymentRow = await conn.query(
+        `
+        SELECT payment_id AS paymentId, order_id AS orderId, amount, payment_method AS method, paid_at AS paidAt
+        FROM payment
+        WHERE order_id = ?
+        LIMIT 1
+        `,
+        [orderId]
+      );
+
+      const order = {
+        orderId,
+        createdAt: now,
+        status: "preparing",
+        totalAmount,
+        restaurant: { name: restaurantName, address: restaurantAddress },
+        customer: { name: customerName, email: customerEmail },
+        orderItems: insertedItems,
+        paymentMethod
+      };
+
+      return { order, payment: paymentRow[0] };
+    });
+
+    res.json({ ok: true, ...result });
+  } 
+  catch (e) {
+    next(e);
+  }
+});
+
 
 
 student1Router.post("/student1/sql/pay", async function(req, res, next) {
@@ -724,6 +972,202 @@ student1Router.post("/student1/mongo/place_order", async function(req, res, next
     };
 
     res.json({ ok: true, order });
+  } 
+  catch (e) {
+    next(e);
+  }
+});
+
+// Place + Pay in one step (prevents creating unpaid orders)
+student1Router.post("/student1/mongo/place_and_pay", async function(req, res, next) {
+  try {
+    let customerEmail;
+    
+    if ( req.body?.customerEmail ) {
+      customerEmail = String(req.body.customerEmail);
+    } 
+    else {
+      customerEmail = "";
+    }
+    
+    let restaurantName;
+    
+    if ( req.body?.restaurantName ) {
+      restaurantName = String(req.body.restaurantName);
+    } 
+    else {
+      restaurantName = "";
+    }
+    
+    let paymentMethod;
+    
+    if ( req.body?.paymentMethod ) {
+      paymentMethod = String(req.body.paymentMethod);
+    } 
+    else {
+      paymentMethod = "";
+    }
+    
+    let items;
+    
+    if ( Array.isArray(req.body?.items) ) {
+      items = req.body.items;
+    } 
+    else {
+      items = null;
+    }
+
+    if ( !customerEmail ) {
+      throw badRequest("customerEmail is required");
+    }
+    if ( !restaurantName ) {
+      throw badRequest("restaurantName is required");
+    }
+    if ( !paymentMethod ) {
+      throw badRequest("paymentMethod is required");
+    }
+    if ( !items || !items.length ) {
+      throw badRequest("items must be a non-empty array");
+    }
+
+    const { db } = await getMongo();
+
+    const customer = await db.collection("people").findOne({ type: "customer", email: customerEmail });
+    if ( !customer ) {
+      throw notFound("customer not found");
+    }
+
+    const restaurant = await db.collection("restaurants").findOne({ name: restaurantName });
+    if ( !restaurant ) {
+      throw notFound("restaurant not found");
+    }
+
+    let totalCents = 0;
+    const normalizedItems = items.map(function(it, idx) {
+      let name;
+      
+      if ( it?.name != null && String(it.name).trim() !== "" ) {
+        name = String(it.name);
+      } 
+      else {
+        name = null;
+      }
+      const quantity = toPositiveInt(it?.quantity, `items[${idx}].quantity`);
+      const unitPriceCents = priceToCents(it?.unitPrice, `items[${idx}].unitPrice`);
+      const unitPrice = centsToAmount(unitPriceCents);
+      if ( !name ) {
+        throw badRequest(`items[${idx}].name is required`);
+      }
+      totalCents += unitPriceCents * quantity;
+      const out = {
+        menuItemId: function() {
+          if ( it?.menuItemId == null ) {
+            return null;
+          } 
+          else {
+            return Number(it.menuItemId);
+          }
+        }(),
+        name,
+        quantity,
+        unitPrice
+      };
+      if ( out.menuItemId != null && !Number.isFinite(out.menuItemId) ) {
+        throw badRequest(`items[${idx}].menuItemId must be a number`);
+      }
+      return out;
+    });
+
+    const totalAmount = centsToAmount(totalCents);
+    const createdAt = new Date();
+    const paidAt = createdAt;
+
+    // I generate a numeric orderId (compatible with migrated data) and rely on a unique index for safety.
+    let insertedOrderId = null;
+    
+    for ( let attempt = 0; attempt < 5; attempt++ ) {
+      const last = await db.collection("orders").findOne({}, { sort: { orderId: -1 }, projection: { _id: 0, orderId: 1 } });
+      let baseId;
+      
+      if ( last?.orderId ) {
+        baseId = Number(last.orderId);
+      } 
+      else {
+        baseId = 0;
+      }
+      
+      const nextId = baseId + 1;
+      if ( !Number.isFinite(nextId) || nextId <= 0 ) {
+        throw new Error("failed to generate orderId");
+      }
+
+      try {
+        await db.collection("orders").insertOne({
+          orderId: nextId,
+          createdAt,
+          status: "preparing",
+          totalAmount,
+          restaurant: {
+            restaurantId: Number(restaurant.restaurantId),
+            name: restaurant.name,
+            address: restaurant.address
+          },
+          customer: { personId: Number(customer.personId), name: customer.name, email: customer.email },
+          orderItems: normalizedItems,
+          payment: {
+            paymentId: null,
+            amount: totalAmount,
+            method: paymentMethod,
+            paidAt
+          },
+          delivery: null
+        });
+        insertedOrderId = nextId;
+        break;
+      } 
+      catch (e) {
+        let errorMessage;
+        
+        if ( e.message ) {
+          errorMessage = String(e.message);
+        } 
+        else {
+          errorMessage = "";
+        }
+        
+        if ( e && (e.code === 11000 || errorMessage.includes("E11000")) ) {
+          continue;
+        }
+        throw e;
+      }
+    }
+
+    if ( !insertedOrderId ) {
+      throw new Error("could not allocate a unique orderId");
+    }
+
+    const order = {
+      orderId: insertedOrderId,
+      createdAt,
+      status: "preparing",
+      totalAmount,
+      restaurant: {
+        name: restaurant.name,
+        address: restaurant.address
+      },
+      customer: {
+        name: customer.name,
+        email: customer.email
+      },
+      orderItems: normalizedItems,
+      paymentMethod
+    };
+
+    res.json({
+      ok: true,
+      order,
+      payment: { orderId: insertedOrderId, amount: totalAmount, method: paymentMethod, paidAt }
+    });
   } 
   catch (e) {
     next(e);

@@ -191,46 +191,22 @@ function Student1Section({ mode, actingCustomerEmail }) {
       return
     }
 
-    setLoading(true)
+    // Do NOT create an order yet. We only create the order when a payment method is selected.
     setOrderResult(null)
-    
-    try {
-      const endpoint = `/student1/${mode}/place_order`
-      const payload = {
-        customerEmail: actingCustomerEmail,
-        restaurantName: selectedRestaurant.name,
-        items: cart.map(function(item) {
-          if ( mode === 'sql' ) {
-            return {
-              menuItemId: item.menuItemId,
-              quantity: item.quantity
-            }
-          } 
-          else {
-            return {
-              menuItemId: item.menuItemId,
-              name: item.name,
-              unitPrice: item.price,
-              quantity: item.quantity
-            }
-          }
-        })
-      }
-      
-      const response = await api.post(endpoint, payload)
-      setOrderResult({ success: true, data: response.data })
-      setCurrentOrder(response.data)
-      clearCart()
-    } 
-    catch (error) {
-      setOrderResult({ 
-        success: false, 
-        error: error.response?.data || { error: error.message } 
+    setPayResult(null)
+    setCurrentOrder({
+      customerEmail: actingCustomerEmail,
+      restaurant: { name: selectedRestaurant.name, address: selectedRestaurant.address },
+      totalAmount: Number(calculateTotal()),
+      orderItems: cart.map(function(item) {
+        return {
+          menuItemId: item.menuItemId,
+          name: item.name,
+          unitPrice: item.price,
+          quantity: item.quantity
+        }
       })
-    } 
-    finally {
-      setLoading(false)
-    }
+    })
   }
 
 
@@ -243,15 +219,45 @@ function Student1Section({ mode, actingCustomerEmail }) {
     setPayResult(null)
     
     try {
-      const endpoint = `/student1/${mode}/pay`
-      const payload = {
-        orderId: parseInt(orderId),
-        paymentMethod
+      // If we have no orderId, we are paying during checkout (create + pay atomically).
+      if ( orderId == null ) {
+        const endpoint = `/student1/${mode}/place_and_pay`
+        const payload = {
+          customerEmail: currentOrder.customerEmail,
+          restaurantName: currentOrder.restaurant?.name,
+          paymentMethod,
+          items: currentOrder.orderItems.map(function(it) {
+            if ( mode === 'sql' ) {
+              return {
+                menuItemId: it.menuItemId,
+                quantity: it.quantity
+              }
+            }
+            return {
+              menuItemId: it.menuItemId,
+              name: it.name,
+              unitPrice: it.unitPrice,
+              quantity: it.quantity
+            }
+          })
+        }
+        const response = await api.post(endpoint, payload)
+        setPayResult({ success: true, data: response.data })
+        setCurrentOrder(null)
+        clearCart()
+      } 
+      else {
+        // Paying an already-existing order from "My Orders"
+        const endpoint = `/student1/${mode}/pay`
+        const payload = {
+          orderId: parseInt(orderId),
+          paymentMethod
+        }
+        
+        const response = await api.post(endpoint, payload)
+        setPayResult({ success: true, data: response.data })
+        setCurrentOrder(null)
       }
-      
-      const response = await api.post(endpoint, payload)
-      setPayResult({ success: true, data: response.data })
-      setCurrentOrder(null)
       
       // Reload orders if on My Orders tab
       if ( view === 'myorders' ) {
@@ -515,12 +521,12 @@ function Student1Section({ mode, actingCustomerEmail }) {
 
 
       {orderResult && (
-        <div className={`alert mt-3 ${orderResult.success ? 'alert-success' : 'alert-danger'}`}>
+        <div className={`alert mt-3 ${orderResult.success ? 'alert-warning' : 'alert-danger'}`}>
           {orderResult.success ? (
             <>
-              <h5 className="alert-heading">Order Placed Successfully!</h5>
+              <h5 className="alert-heading">Order Created (Awaiting Payment)</h5>
               <p>Order ID: <strong>#{orderResult.data.orderId || orderResult.data.order?.orderId}</strong></p>
-              <p className="mb-0">You can now pay for this order below or view it in the "My Orders" tab.</p>
+              <p className="mb-0">Please complete payment in the modal below (or later from "My Orders").</p>
             </>
           ) 
           : (
@@ -534,9 +540,7 @@ function Student1Section({ mode, actingCustomerEmail }) {
 
 
       {currentOrder && (
-        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }} onClick={function() {
-          setCurrentOrder(null)
-        }}>
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <div className="modal-dialog modal-dialog-centered" onClick={function(e) {
             e.stopPropagation()
           }}>
@@ -554,12 +558,12 @@ function Student1Section({ mode, actingCustomerEmail }) {
               </div>
               <div className="modal-body">
                 <div className="alert alert-info mb-3">
-                  <strong>Order placed successfully!</strong> Please select a payment method to complete your order.
+                  <strong>Payment required.</strong> Your order will only be created after you select a payment method.
                 </div>
                 
                 <dl className="row mb-3">
                   <dt className="col-sm-4">Order ID:</dt>
-                  <dd className="col-sm-8"><strong>#{currentOrder.orderId || currentOrder.order?.orderId}</strong></dd>
+                  <dd className="col-sm-8"><strong>Will be generated after payment</strong></dd>
                   
                   <dt className="col-sm-4">Restaurant:</dt>
                   <dd className="col-sm-8">{currentOrder.restaurant?.name || currentOrder.order?.restaurant?.name || 'N/A'}</dd>
@@ -574,7 +578,7 @@ function Student1Section({ mode, actingCustomerEmail }) {
                     <button
                       className="btn btn-primary btn-lg"
                       onClick={function() {
-                        handlePay(currentOrder.orderId || currentOrder.order?.orderId, 'card')
+                        handlePay(null, 'card')
                       }}
                       disabled={loading}
                     >
@@ -587,7 +591,7 @@ function Student1Section({ mode, actingCustomerEmail }) {
                     <button
                       className="btn btn-success btn-lg"
                       onClick={function() {
-                        handlePay(currentOrder.orderId || currentOrder.order?.orderId, 'cash')
+                        handlePay(null, 'cash')
                       }}
                       disabled={loading}
                     >
@@ -600,7 +604,7 @@ function Student1Section({ mode, actingCustomerEmail }) {
                     <button
                       className="btn btn-info btn-lg"
                       onClick={function() {
-                        handlePay(currentOrder.orderId || currentOrder.order?.orderId, 'paypal')
+                        handlePay(null, 'paypal')
                       }}
                       disabled={loading}
                     >
