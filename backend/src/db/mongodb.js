@@ -54,13 +54,8 @@ async function ensureMongoIndexes() {
     Payment lookup:
     `orderId` is already unique, but We keep a named index we can rely on (and evolve) that matches
     how the payment flow queries orders.
+    Note: createIndex is idempotent - if the index already exists with the same spec, it does nothing.
   */
-  try {
-    // If an old/previously-named index exists, We remove it so reruns don’t error.
-    await db.collection("orders").dropIndex("idx_orders_payment_lookup");
-  } catch (_e) {
-    // It's fine if the index doesn't exist yet.
-  }
   await db.collection("orders").createIndex(
     { orderId: 1, "payment.paidAt": 1 },
     { name: "idx_orders_payment_lookup" }
@@ -69,14 +64,8 @@ async function ensureMongoIndexes() {
   /*
     Student 2 (delivery + report):
     We index by rider email + timestamps + delivery status because assignment/reporting filters on those.
+    Note: createIndex is idempotent - if the index already exists with the same spec, it does nothing.
   */
-  try {
-    // We clean up earlier index variants to keep the names consistent across runs.
-    await db.collection("orders").dropIndex("idx_orders_delivery_rider_date_status");
-  } catch (_e) {
-    // It's fine if it never existed (leftover from earlier iterations).
-  }
-
   await db.collection("orders").createIndex(
     { "delivery.rider.email": 1, createdAt: -1, "delivery.deliveryStatus": 1, "delivery.assignedAt": -1 },
     { name: "idx_orders_student2_report" }
@@ -93,7 +82,7 @@ async function ensureMongoIndexes() {
 
   /*
     Extra reporting support:
-    These are more “general” indexes that help date-range reporting patterns.
+    These are more "general" indexes that help date-range reporting patterns.
   */
   await db.collection("orders").createIndex(
     { "restaurant.name": 1, createdAt: 1 },
@@ -101,11 +90,7 @@ async function ensureMongoIndexes() {
   );
 
   // Rider assignment/report queries are built around rider + status + assignedAt.
-  try {
-    await db.collection("orders").dropIndex("idx_orders_rider_assignment");
-  } catch (_e) {
-    // It's fine if it doesn't exist yet.
-  }
+  // Note: createIndex is idempotent - if the index already exists with the same spec, it does nothing.
   await db.collection("orders").createIndex(
     { "delivery.rider.email": 1, "delivery.deliveryStatus": 1, "delivery.assignedAt": -1 },
     { name: "idx_orders_rider_assignment" }
@@ -113,4 +98,3 @@ async function ensureMongoIndexes() {
 }
 
 module.exports = { getMongo, ensureMongoIndexes };
-

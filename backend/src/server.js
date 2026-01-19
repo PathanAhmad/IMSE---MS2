@@ -24,14 +24,14 @@ async function main() {
   // We accept JSON bodies (small limit so requests stay sane).
   app.use(express.json({ limit: "1mb" }));
 
-
+  // We ensure MongoDB indexes are created once at startup, not on every health check.
+  await ensureMongoIndexes();
 
   app.get("/api/health", async function(_req, res) {
     // We run quick DB checks so We know the wiring is correct.
     await withConn(function(conn) {
       return conn.query("SELECT 1");
     });
-    await ensureMongoIndexes();
     const { db } = await getMongo();
 
     // We return simple counts + migration info so it's easy to prove migration worked.

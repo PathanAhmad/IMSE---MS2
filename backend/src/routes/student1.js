@@ -68,6 +68,45 @@ function centsToAmount(cents) {
 
 
 
+function toJsonSafeNumber(v, fieldName) {
+  // We normalize DB numbers (incl. BigInt) to JSON-safe primitives.
+  if ( v == null ) {
+    return 0;
+  }
+  if ( typeof v === "bigint" ) {
+    const max = BigInt(Number.MAX_SAFE_INTEGER);
+    const min = BigInt(Number.MIN_SAFE_INTEGER);
+    if ( v > max || v < min ) {
+      // We preserve precision by returning a string if it does not fit safely.
+      return v.toString();
+    }
+    return Number(v);
+  }
+  if ( typeof v === "number" ) {
+    if ( !Number.isFinite(v) ) {
+      throw new Error(`invalid ${fieldName}`);
+    }
+    return v;
+  }
+  if ( typeof v === "string" ) {
+    const n = Number(v);
+    if ( !Number.isFinite(n) ) {
+      throw new Error(`invalid ${fieldName}`);
+    }
+    return n;
+  }
+  throw new Error(`invalid ${fieldName}`);
+}
+
+function toMoneyString(v, fieldName) {
+  const n = toJsonSafeNumber(v, fieldName);
+  // If it overflowed to string, keep it as-is (still JSON-safe).
+  if ( typeof n === "string" ) {
+    return n;
+  }
+  return Number(n).toFixed(2);
+}
+
 // -------------------------
 // Student 1 - SQL (MariaDB)
 // Use case: Place order + pay
@@ -714,7 +753,7 @@ student1Router.get("/student1/sql/report", async function(req, res, next) {
       };
 
       // We compute orders by status.
-      const byStatus = await conn.query(
+      const byStatusRows = await conn.query(
         `
         SELECT
           o.status,
@@ -728,9 +767,12 @@ student1Router.get("/student1/sql/report", async function(req, res, next) {
         `,
         params
       );
+      const byStatus = byStatusRows.map(function(r) {
+        return { status: r.status, count: toJsonSafeNumber(r.count, "byStatus.count") };
+      });
 
       // We compute orders per day for trend.
-      const byDay = await conn.query(
+      const byDayRows = await conn.query(
         `
         SELECT
           DATE(o.created_at) AS date,
@@ -746,9 +788,16 @@ student1Router.get("/student1/sql/report", async function(req, res, next) {
         `,
         params
       );
+      const byDay = byDayRows.map(function(r) {
+        return {
+          date: r.date,
+          orders: toJsonSafeNumber(r.orders, "byDay.orders"),
+          revenue: toMoneyString(r.revenue, "byDay.revenue")
+        };
+      });
 
       // We compute payment method breakdown.
-      const byPaymentMethod = await conn.query(
+      const byPaymentMethodRows = await conn.query(
         `
         SELECT
           pay.payment_method AS method,
@@ -764,9 +813,16 @@ student1Router.get("/student1/sql/report", async function(req, res, next) {
         `,
         params
       );
+      const byPaymentMethod = byPaymentMethodRows.map(function(r) {
+        return {
+          method: r.method,
+          count: toJsonSafeNumber(r.count, "byPaymentMethod.count"),
+          total: toMoneyString(r.total, "byPaymentMethod.total")
+        };
+      });
 
       // We compute top 5 menu items sold.
-      const topItems = await conn.query(
+      const topItemsRows = await conn.query(
         `
         SELECT
           m.name AS itemName,
@@ -784,6 +840,13 @@ student1Router.get("/student1/sql/report", async function(req, res, next) {
         `,
         params
       );
+      const topItems = topItemsRows.map(function(r) {
+        return {
+          itemName: r.itemName,
+          totalQuantity: toJsonSafeNumber(r.totalQuantity, "topItems.totalQuantity"),
+          totalRevenue: toMoneyString(r.totalRevenue, "topItems.totalRevenue")
+        };
+      });
 
       return {
         summary: summaryData,
