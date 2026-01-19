@@ -130,7 +130,7 @@ function App() {
                   </span>
                 </div>
                 <small className="text-muted">
-                  Mode switches automatically after running <strong>Migrate SQL → MongoDB</strong> in Admin Setup.
+                  Mode switches after running <strong>Migrate SQL → MongoDB</strong> in Admin Setup.
                 </small>
                 
                 {systemStatus?.mongo?.migration?.lastMigrationAt && (
