@@ -4,6 +4,18 @@ A small, dockerized full-stack demo that starts with a **normalized SQL schema (
 
 This project focuses on **data modeling trade-offs**, **migration strategy**, and **operational clarity** (one-command local startup).
 
+---
+
+## About
+
+This is a compact end-to-end project that demonstrates:
+
+- designing the same domain in **two storage models** (relational + document)
+- implementing a **snapshot migration** from SQL → MongoDB (no dual-writes)
+- modeling MongoDB documents for **read-heavy endpoints and reporting**, including **order snapshots** for historical correctness
+
+**Stack:** Node.js/Express, React/Vite, MariaDB, MongoDB, Docker Compose.
+
 ![ER Diagram](Food%20Delivery%20ER%20_20260110_013128_0000.png)
 
 ---
