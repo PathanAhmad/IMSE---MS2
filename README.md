@@ -1,4 +1,4 @@
-# SQL → MongoDB Migration Demo (Food Delivery)
+# Polyglot Persistence Demo: SQL → MongoDB Migration (Food Delivery)
 
 A small, dockerized full-stack demo that starts with a **normalized SQL schema (MariaDB)**, then **migrates a snapshot into MongoDB** using a document model optimized for the API’s read patterns.
 
@@ -120,4 +120,4 @@ The response includes:
 
 ## Notes on tooling
 
-AI tooling was used only for **language cleanup in documentation** and generating **synthetic demo data**. The implementation decisions and code were written and verified by the authors.
+AI tooling was used only for light editing in documentation and for generating synthetic demo data. The implementation decisions and code were written and verified by the authors.
