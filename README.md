@@ -1,43 +1,73 @@
-# IMSE MS2 - Food Delivery System
+# SQL → MongoDB Migration Demo (Food Delivery)
 
-We built a small food delivery demo that works in **two modes**:
+A small, dockerized full-stack demo that starts with a **normalized SQL schema (MariaDB)**, then **migrates a snapshot into MongoDB** using a document model optimized for the API’s read patterns.
 
-- **SQL mode** (MariaDB): normal relational tables + joins
-- **Mongo mode** (MongoDB): documents optimized for our specific API use-cases
+This project focuses on **data modeling trade-offs**, **migration strategy**, and **operational clarity** (one-command local startup).
 
-There is **no manual SQL/Mongo toggle** in the UI. The app **switches to Mongo mode automatically after migration** (as required by the MS2 guidelines).
+![ER Diagram](Food%20Delivery%20ER%20_20260110_013128_0000.png)
 
 ---
 
-## Startup instructions
+## Why this project
+
+- **Polyglot persistence**: relational model for transactional consistency + document model for read-optimized access.
+- **Snapshot migration (no dual writes)**: a deliberate trade-off that keeps the system simple while demonstrating a real migration path.
+- **Document modeling with historical accuracy**: order documents embed/snapshot key data so reports and order history remain correct even if entities change later.
+- **Indexes and observability**: MongoDB indexes are created at startup; the health endpoint exposes DB connectivity, document counts, and migration metadata.
+
+---
+
+## What you can do in the UI
+
+The frontend has an **Admin** tab that drives the demo flow:
+
+1. **Check Health**: verifies MariaDB connectivity + ensures MongoDB indexes exist.
+2. **Import & Reset Data**: creates SQL schema and inserts demo data.
+3. **Migrate to MongoDB**: reads a full snapshot from MariaDB and writes it into MongoDB.
+
+After migration, the app **automatically switches to MongoDB mode** (there is intentionally no manual toggle).
+
+---
+
+## Architecture (high level)
+
+- **Frontend**: React + Vite (talks to the backend at `/api/...`).
+- **Backend**: Node.js + Express.
+  - SQL endpoints use **MariaDB**.
+  - Mongo endpoints use **MongoDB**.
+  - Migration endpoint copies SQL → MongoDB and writes a migration marker document.
+
+---
+
+## Data modeling (SQL vs MongoDB)
+
+### SQL (MariaDB)
+
+The relational schema captures the core domain (people, customers/riders, restaurants, menu items, orders, payments, deliveries) with foreign keys and join tables.
+
+Schema file: `db/mariadb/schema.sql`.
+
+### MongoDB (read model)
+
+MongoDB stores a small set of collections designed around common API use-cases:
+
+- `restaurants`: basic restaurant info
+- `people`: customers + riders in one collection (with a `type` discriminator)
+- `orders`: an order-centric document that **embeds**:
+  - `orderItems`
+  - `payment`
+  - `delivery` (+ rider snapshot)
+  - snapshots of restaurant and customer at order time
+
+Design notes and query examples: `NOSQL_DESIGN.md`.
+
+---
+
+## Run locally (Docker)
 
 ### Prerequisites
+
 - Docker + Docker Compose
-
-### What starts up
-When we run Docker Compose, we start 4 containers:
-- **MariaDB** (SQL)
-- **MongoDB** (NoSQL)
-- **Backend** (Node.js + Express) on port **3000**
-- **Frontend** (React + Vite) on port **5173**
-
-After it's running:
-- **Frontend:** `http://localhost:5173`
-- **Backend API:** `http://localhost:3000/api`
-
-### First-time demo setup (from the UI)
-In the frontend, open the **Admin** tab.
-
-Then run:
-- **Check Health** (pings MariaDB + ensures Mongo indexes exist)
-- **Import & Reset Data** (creates schema + inserts demo data)
-- **Migrate to MongoDB** (copies the SQL snapshot into MongoDB)
-
-After migration, the main screen shows **Data Source: MongoDB (after migration)** and Student 1/2 use cases + reports run against MongoDB endpoints.
-
----
-
-## How to run (Docker commands)
 
 ### Start everything
 
@@ -52,38 +82,42 @@ docker compose down
 ```
 
 ### Full reset (delete DB volumes)
-Use this if you want a clean database state.
 
 ```bash
 docker compose down -v
 ```
 
-## Architecture overview
+### URLs
 
-### High-level flow
-- The **frontend** calls the **backend** at `/api/...`.
-- The backend talks to **MariaDB** for SQL mode endpoints.
-- For Mongo mode endpoints, the backend talks to **MongoDB**.
-- The **migration** endpoint reads a full snapshot from MariaDB and writes it into MongoDB (we don't "dual write").
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:3000/api`
 
-### Repo layout (main folders)
-- `frontend/`: React UI (Vite dev server in Docker)
+---
+
+## Quick API smoke test
+
+After starting containers:
+
+```bash
+curl http://localhost:3000/api/health
+```
+
+The response includes:
+- MariaDB connectivity check
+- MongoDB connectivity + document counts
+- Migration marker metadata (used by the UI to determine active mode)
+
+---
+
+## Repo layout
+
+- `frontend/`: React UI
 - `backend/`: Express API + DB adapters
-- `db/mariadb/schema.sql`: SQL schema used by the import/reset step
-- `docker-compose.yml`: wires all services together
+- `db/mariadb/schema.sql`: SQL schema used by import/reset
+- `docker-compose.yml`: service wiring
 
 ---
 
-## AI tools (responsible use)
+## Notes on tooling
 
-We used AI tools to brainstorm UI/UX ideas, to improve wording in documentation, and to generate the fake data.
-We did **not** copy-paste AI-generated code, and we did not use AI to “solve” the assignment for us.
-All code and final decisions were made and verified by us.
-
----
-
-## Troubleshooting
-
-- If the UI is empty or errors: check logs (`docker compose logs -f backend` / `docker compose logs -f frontend`).
-- If data looks wrong: in **Admin**, run **Check Health → Import & Reset Data → Migrate to MongoDB** (in that order).
-- If nothing loads: confirm `http://localhost:5173` and `http://localhost:3000/api` are reachable and `docker compose ps` shows all containers up.
+AI tooling was used only for **language cleanup in documentation** and generating **synthetic demo data**. The implementation decisions and code were written and verified by the authors.
